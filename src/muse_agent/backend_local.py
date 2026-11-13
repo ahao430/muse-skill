@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,13 +34,35 @@ class LocalBackend:
         cmd = [self.config.bridge_command, str(self.script), *args]
         if self.config.credentials_dir:
             cmd += ["--directory", self.config.credentials_dir]
+        env = None
+        if self.config.bridge_proxy:
+            # Preferred no-TUN proxy route: proxychains4 + bun (syscall-level
+            # SOCKS; bun's own proxied WebSocket is broken, and node's
+            # global-agent route yields empty event streams). Falls back to
+            # node+global-agent when proxychains4 is unavailable.
+            conf = cfg.CONFIG_DIR / "proxychains.conf"
+            if not conf.exists():
+                conf.parent.mkdir(parents=True, exist_ok=True)
+                port = self.config.bridge_proxy.rsplit(":", 1)[-1]
+                conf.write_text(f"strict_chain\nproxy_dns\n[ProxyList]\nsocks5 127.0.0.1 {port}\n")
+            import shutil
+
+            if shutil.which("proxychains4"):
+                cmd = ["proxychains4", "-f", str(conf), *cmd]
+            else:
+                cmd = ["node", str(self.script.parent / "node-proxy.mjs"), *args]
+                if self.config.credentials_dir:
+                    cmd += ["--directory", self.config.credentials_dir]
+                env = dict(os.environ)
+                env["GLOBAL_AGENT_HTTP_PROXY"] = self.config.bridge_proxy
         try:
             proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout + 15,
+                cmd, capture_output=True, text=True, timeout=timeout + 15, env=env,
             )
         except FileNotFoundError as exc:
             raise LocalBackendError(
-                f"{self.config.bridge_command!r} not found — install bun or set bridge_command"
+                f"{cmd[0]!r} not found — install bun (and proxychains-ng) "
+                "or fix bridge_command/bridge_proxy"
             ) from exc
         except subprocess.TimeoutExpired as exc:
             raise LocalBackendError(f"bridge timed out after {timeout + 15}s") from exc

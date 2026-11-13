@@ -3,6 +3,8 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "muse-client": "0.4.0"
+    "global-agent": "^4.1.7",
+    "muse-client": "0.4.0",
+    "undici": "^8.12.4"
   }
 }

@@ -19,6 +19,16 @@ from .backend_ssh import MuseUnavailable, NotPaired  # re-exported for server
 
 MAX_WAIT = 600
 
+_NETWORK_ERROR_MARKERS = (
+    "certificate", "fetch failed", "websocket", "connection",
+    "socket", "timed out", "timeout", "network", "reset", "unreachable",
+)
+
+
+def _is_network_error(error: str) -> bool:
+    e = error.lower()
+    return any(marker in e for marker in _NETWORK_ERROR_MARKERS)
+
 
 @dataclass
 class SendResult:
@@ -125,8 +135,10 @@ class GadgetAdapter:
         task = self._tasks.get(task_id)
         if task is None:
             return {"ok": False, "error": f"unknown task_id {task_id!r}"}
-        if task["status"] == "failed":
+        if task["status"] == "failed" and not _is_network_error(task.get("error", "")):
             return {"ok": True, "task": task}
+        # network-flavored failures (proxy down, TLS reset, DNS rot) are
+        # transient: fall through and retry instead of pinning the task dead.
         if task["status"] == "completed" and task.get("images"):
             return {"ok": True, "task": task}
         # completed-without-images falls through: Muse presentations can

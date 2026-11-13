@@ -32,6 +32,9 @@ class Config:
     default_session: str | None = None  # None = main chat
     bridge_command: str = "bun"  # runner for bridge/bridge.mjs (local backend)
     bridge_dir: str = str(BRIDGE_DIR)
+    bridge_proxy: str = ""      # e.g. http://127.0.0.1:7897 — routes the bridge
+    #                          # through an HTTP proxy via node+global-agent
+    #                          # (bun's proxied WebSocket is broken)
     credentials_dir: str | None = None  # muse-client credentials dir override
     # COS media relay: Mac holds the keys, Muse only receives presigned URLs.
     cos_bucket_domain: str = ""       # e.g. muse-1300xxx.cos.ap-guangzhou.myqcloud.com
@@ -70,6 +73,8 @@ def load_config() -> Config:
         cfg.bridge_dir = file_values["bridge_dir"]
     if "credentials_dir" in file_values and file_values["credentials_dir"]:
         cfg.credentials_dir = file_values["credentials_dir"]
+    if "bridge_proxy" in file_values and file_values["bridge_proxy"]:
+        cfg.bridge_proxy = file_values["bridge_proxy"]
     for field in ("cos_bucket_domain", "cos_secret_id", "cos_secret_key"):
         if field in file_values and file_values[field]:
             setattr(cfg, field, file_values[field])
