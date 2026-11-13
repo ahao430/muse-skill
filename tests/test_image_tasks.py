@@ -392,6 +392,37 @@ def test_notifications_dedupe_and_blocks(tmp_path, monkeypatch):
     assert not [b for b in blocks2 if b.type == "image"]
 
 
+def test_backend_local_proxy_branch_no_nameerror(tmp_path, monkeypatch):
+    """bridge_proxy set → the proxychains wrapper path must build without
+    NameError (regression: `cfg` was referenced but never imported)."""
+    from muse_agent import backend_local as bl
+
+    bridge = tmp_path / "bridge"
+    bridge.mkdir(exist_ok=True)
+    (bridge / "bridge.mjs").write_text("//")
+    monkeypatch.setattr(bl.cfg, "CONFIG_DIR", tmp_path)
+    captured = {}
+
+    class FakeCompleted:
+        def __init__(self, rc, out):
+            self.returncode, self.stdout, self.stderr = rc, out, ""
+
+    def fake_run(cmd, capture_output, text, timeout, env=None):
+        captured["cmd"] = cmd
+        return FakeCompleted(0, '{"ok": true, "reply": "hi"}')
+
+    monkeypatch.setattr(bl.subprocess, "run", fake_run)
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/proxychains4")
+    backend = bl.LocalBackend(
+        Config(backend="local", bridge_dir=str(bridge),
+               bridge_proxy="http://127.0.0.1:7897"))
+    payload = backend.chat("hello", "s", 5)
+    assert payload["ok"] is True
+    assert captured["cmd"][0] == "proxychains4", "must wrap via proxychains4"
+    assert captured["cmd"][4].endswith("bridge.mjs")  # proxychains4 -f conf bun script…
+    assert (tmp_path / "proxychains.conf").exists(), "conf must be auto-generated"
+
+
 def test_backend_local_notifications_args(tmp_path, monkeypatch):
     from muse_agent import backend_local as bl
 

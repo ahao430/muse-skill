@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from . import config as cfg
 from .backend_ssh import MuseUnavailable
 from .config import Config
 
