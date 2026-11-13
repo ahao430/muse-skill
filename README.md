@@ -259,6 +259,9 @@ cp -r skills/muse ~/.claude/skills/muse      # Claude Code
 - 图片限 2 MiB（JPEG/PNG/GIF/WebP）
 - 让 Muse 画图：`muse_get_images` 会请求 Muse 生成 → 它把成品转存为公网直链
   （muse.ai/files）→ 工具自动下载到本地临时文件并返回路径；仅 local 后端支持
+- **外联审批**：让 Muse 跑外联任务（画图/上传/npm）时，Muse app 可能弹出
+  审批卡片，不批准任务会一直 pending——在 app 里选"永久允许"即可（同域
+  不再弹）；想全自动见 [docs/auto-approve.md](docs/auto-approve.md)
 
 ### 直接用 CLI（调试 / 脚本）
 
@@ -293,6 +296,7 @@ bridge_command: bun     # bridge/bridge.mjs 的运行器（node ≥22.18 也可�
 | `HTTP 400` on side chat | Muse 只接受 **UUID 格式**的 session id，用 `muse_sessions` 生成 |
 | 换了 SDK token 后连不上 | 凭证与签发时的 token 绑定：先 unpair 再重新 pair |
 | ssh 后端不可达 | `scripts/provision.sh` 部署；`musegadget info` / `doctor` 排查 |
+| 让 Muse 跑任务卡住无响应 | 看 Muse app 是否有**外联审批**卡片待批准——批准一次（永久允许）同域不再弹；想全自动见 [docs/auto-approve.md](docs/auto-approve.md) |
 
 安全：token 与凭证只在配对机上，永不入库；local 后端不给 Muse 任何本机
 命令权限；ssh 后端下 Muse 获得安装账号的 `system.run`/`file.*` 能力，且
