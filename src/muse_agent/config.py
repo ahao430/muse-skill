@@ -46,6 +46,10 @@ class Config:
     def media_domain(self) -> str:
         return self.cos_bucket_domain
 
+    @property
+    def cos_relay_ready(self) -> bool:
+        return bool(self.cos_bucket_domain and self.cos_secret_id and self.cos_secret_key)
+
 
 def _parse_flat_yaml(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}

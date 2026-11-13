@@ -136,7 +136,7 @@ async function chatCollect(message, chatOpts) {
       throw e;
     }
     if (!sub) sub = await client.subscribe({ sessionId: chatOpts.sessionId, signal });
-    for (const ev of turn.acknowledge(ack)) collectFromEvent(ev, addImage, t => reply = t);
+    for (const ev of turn.acknowledge(ack)) collectFromEvent(ev, addImage, t => reply = t, chatOpts.mediaDomain);
     for await (const ev of sub) {
       if (ev.event === 'approvals.snapshot') {
         const pending = ev.payload?.pending_approvals ?? [];
@@ -146,7 +146,7 @@ async function chatCollect(message, chatOpts) {
           approval_id: p?.approval_id ?? '',
         })));
       }
-      collectFromEvent(ev, addImage, t => reply = t);
+      collectFromEvent(ev, addImage, t => reply = t, chatOpts.mediaDomain);
       turn.feed(ev);
       if (turn.complete()) break;
     }
@@ -177,22 +177,26 @@ async function chatCollect(message, chatOpts) {
   };
 }
 
-function collectFromEvent(ev, addImage, setText) {
+function collectFromEvent(ev, addImage, setText, mediaDomain) {
   if (ev?.type === 'reply') setText(ev.text);
   const payload = ev?.raw?.payload ?? ev?.payload;
   const pres = payload?.presentations ?? (payload?.data ? [payload.data] : []);
+  // Public, fetchable link domains: Muse's own host plus the configured COS
+  // relay — cards/images[] may point at either (sandbox URLs stay excluded).
+  const md = String(mediaDomain ?? '').replace(/\./g, '\\.');
+  const domainRx = new RegExp('https://(muse\\.ai|www\\.muse\\.ai' + (md ? '|' + md : '') + ')/');
   for (const p of pres) {
     // File-card form: {url, fallback_text} — Muse shares a single finished
     // media link this way (no images[] array at all).
     const cardUrl = p?.url ?? null;
-    if (cardUrl && /https:\/\/(muse\.ai|www\.muse\.ai)\//.test(cardUrl)) {
+    if (cardUrl && domainRx.test(cardUrl)) {
       addImage({ url: cardUrl, label: (p.fallback_text ?? '').slice(0, 60),
                  mime: cardUrl.endsWith('.png') ? 'image/png' : 'image/webp' });
     }
     for (const img of p?.images ?? []) {
       const url = img?.variants?.original ?? img?.variants?.large ?? null;
-      // Only public muse.ai links are fetchable; sandbox URLs are not.
-      if (url && /https:\/\/(muse\.ai|www\.muse\.ai)\//.test(url) && img.missing !== true) {
+      // Only public links are fetchable; sandbox URLs are not.
+      if (url && domainRx.test(url) && img.missing !== true) {
         addImage({ url, label: img.label ?? '', mime: img.mime ?? 'image/webp',
                    width: img.width, height: img.height, byte_len: img.byte_len });
       }
@@ -267,7 +271,7 @@ async function main() {
             if (buf) { buf.done = true; messages.push(buf); buffers.delete(id); }
           } else if (ev.event === 'delta.presentation') {
             // reuse the card/images extraction from collectFromEvent
-            collectFromEvent({ payload: ev.payload }, addImage, () => {});
+            collectFromEvent({ payload: ev.payload }, addImage, () => {}, opts.mediaDomain);
           }
         }
       } finally { sub.close?.(); }

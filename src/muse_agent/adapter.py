@@ -157,9 +157,10 @@ class GadgetAdapter:
                 "（贴在回复里即可，不要重新上传，不要重新画）。")
 
     @staticmethod
-    def _first_message_remote(prompt: str, upload: dict | None) -> str:
-        """First send on the ssh backend: the reply text is the only media
-        channel, so the upload slot rides along from the very start."""
+    def _first_message_with_slot(prompt: str, upload: dict | None) -> str:
+        """First send with the COS relay configured: the upload slot rides
+        along from the very start. Without it Muse defaults to the official
+        files.upload route — per-file approval cards that stall the turn."""
         if upload:
             return (
                 f"{prompt}\n\n"
@@ -181,8 +182,14 @@ class GadgetAdapter:
         task = self._tasks.get(task_id)
         if task is None:
             return {"ok": False, "error": f"unknown task_id {task_id!r}"}
-        if self.config.backend != "local":
-            return self._poll_image_task_remote(task, wait_seconds)
+        if self.config.backend != "local" or self.config.cos_relay_ready:
+            # COS relay (either backend): the reply text IS the media channel
+            # — the upload slot rides in the message and Muse answers with a
+            # Markdown link. The plain chat turn is the reliable transport;
+            # chatCollect's manual subscribe dance misses reply events under
+            # connection turbulence, and its extras (presentation cards,
+            # approval snapshots) only matter on the official route.
+            return self._poll_image_task_via_chat(task, wait_seconds)
         if task["status"] == "failed" and not _is_network_error(task.get("error", "")):
             return {"ok": True, "task": task}
         # network-flavored failures (proxy down, TLS reset, DNS rot) are
@@ -193,20 +200,49 @@ class GadgetAdapter:
         # arrive late (or be re-presented on request), so re-polls absorb
         # newly seen links instead of short-circuiting on the old state.
         # First poll delivers the original prompt; later polls must NOT
-        # regenerate — they only ferry media out (presigned COS upload when
-        # configured, else Muse's own muse.ai/files re-share).
-        upload = self._presign_upload()
-        message = task["prompt"] if not task.get("sent_prompt") \
-            else self._nudge_message(upload)
+        # regenerate — they only ferry media out (Muse's own muse.ai/files
+        # re-share on this official route; the COS route never gets here).
+        message = self._nudge_message(None) if task.get("sent_prompt") else task["prompt"]
         self._tasks.update(task_id, sent_prompt=True, status="pending")
+        payload = None
+        bridge_error = ""
         try:
-            payload = self.backend.images(message, task["session_id"], wait_seconds,
-                                          upload_url=upload and upload["put_url"],
-                                          media_domain=self.config.media_domain)
+            payload = self.backend.images(message, task["session_id"], wait_seconds)
         except Exception as exc:  # noqa: BLE001 — bridge crash must not lose the task
-            self._tasks.update(task_id, status="timeout",
-                               error=f"bridge error: {exc}")
-            return {"ok": True, "task": self._tasks.get(task_id)}
+            bridge_error = f"bridge error: {exc}"
+
+        def _needs_chat_fallback(p) -> bool:
+            # The images command's manual subscribe→send→subscribe dance is
+            # fragile under connection turbulence (TLS resets, closed WSS),
+            # while the plain chat turn (client.chat()) has proven far
+            # sturdier — fall back to it on network-flavored failures only.
+            if p is None:
+                return True
+            if not p.get("ok"):
+                return _is_network_error(str(p.get("error", "")))
+            return p.get("status") == "failed" and _is_network_error(str(p.get("detail", "")))
+
+        if _needs_chat_fallback(payload):
+            result = None
+            try:
+                result = self.chat(message, task["session_id"], wait_seconds)
+            except Exception as exc:  # noqa: BLE001
+                bridge_error = bridge_error or f"bridge error: {exc}"
+            if result is None:
+                # Both channels down — network-flavored by construction
+                # (that's the only way into this branch), so keep retryable.
+                self._tasks.update(task_id, status="timeout", error=bridge_error)
+                return {"ok": True, "task": self._tasks.get(task_id)}
+            links = _extract_media_links(result.text, self.config.media_domain)
+            if not result.ok:
+                status = "timeout" if _is_network_error(result.detail) else "failed"
+            elif links or result.text.strip():
+                status = "completed"
+            else:
+                status = "timeout"
+            payload = {"ok": True, "status": status, "reply": result.text,
+                       "images": links, "approvals": [],
+                       "detail": result.detail if not result.ok else bridge_error}
 
         if not payload.get("ok"):
             self._tasks.update(task_id, status="failed", error=str(payload.get("error", "")))
@@ -238,16 +274,16 @@ class GadgetAdapter:
         self._tasks.update(task_id, **updates)
         return {"ok": True, "task": self._tasks.get(task_id)}
 
-    def _poll_image_task_remote(self, task: dict, wait_seconds: int) -> dict:
-        """ssh backend: the official CLI returns only the reply text — no
-        presentation events, no approval snapshot. Links Muse pastes into
-        its answer (COS direct link via the zcode-bridge skill, or a
-        muse.ai re-share) are the only media channel; harvest them from the
+    def _poll_image_task_via_chat(self, task: dict, wait_seconds: int) -> dict:
+        """Chat-turn polling: ssh backend (the official CLI returns only the
+        reply text) and local-with-COS (the reply text IS the media channel).
+        Links Muse pastes into its answer (COS direct link via the
+        zcode-bridge skill, or a muse.ai re-share) are harvested from the
         text. Approval waits are invisible here and surface as timeouts."""
         task_id = task["task_id"]
         upload = self._presign_upload()
         message = self._nudge_message(upload) if task.get("sent_prompt") \
-            else self._first_message_remote(task["prompt"], upload)
+            else self._first_message_with_slot(task["prompt"], upload)
         self._tasks.update(task_id, sent_prompt=True, status="pending")
         try:
             result = self.chat(message, task["session_id"], wait_seconds)

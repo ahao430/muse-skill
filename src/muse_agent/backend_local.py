@@ -96,6 +96,8 @@ class LocalBackend:
     def notifications(self, session_id: str, listen_seconds: int) -> dict:
         """Passive listen: collect messages/links Muse pushes during the window."""
         args = ["notifications", "--timeout", str(listen_seconds), "--session", session_id]
+        if self.config.media_domain:
+            args += ["--media-domain", self.config.media_domain]
         if self.config.credentials_dir:
             args += ["--directory", self.config.credentials_dir]
         return self._run(args, timeout=listen_seconds + 30)

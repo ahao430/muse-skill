@@ -134,6 +134,131 @@ def test_approval_required_state(adapter, tmp_path):
     assert "Upload a file" in result["task"]["approvals"][0]["action_label"]
 
 
+# ---------------------------------------- local backend: chat fallback on flaky images
+
+def _local_adapter(tmp_path, monkeypatch, backend, cos=True):
+    from muse_agent import tasks as tm
+
+    bridge = tmp_path / "bridge"
+    bridge.mkdir(exist_ok=True)
+    (bridge / "bridge.mjs").write_text("//")
+    monkeypatch.setattr(tm.TaskStore, "_load", lambda self: None)
+    monkeypatch.setattr(tm.TaskStore, "_save", lambda self: None)
+    kwargs = {"backend": "local", "bridge_dir": str(bridge)}
+    if cos:
+        kwargs.update(cos_bucket_domain="muse-t.cos.ap-guangzhou.myqcloud.com",
+                      cos_secret_id="AKIDX", cos_secret_key="K")
+    ad = GadgetAdapter(Config(**kwargs))
+    ad.backend = backend
+    ad._resolve = lambda s=None: "sess-fb"
+    return ad
+
+
+def test_local_poll_network_error_falls_back_to_chat(tmp_path, monkeypatch):
+    class FlakyImagesBackend:
+        def __init__(self):
+            self.chat_calls = 0
+
+        def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
+            return {"ok": False, "error": "Muse connection closed"}
+
+        def chat(self, message, session_id, timeout):
+            self.chat_calls += 1
+            return {"ok": True,
+                    "reply": "好了\n![图片](https://muse.ai/files/x.webp)"}
+
+    backend = FlakyImagesBackend()
+    ad = _local_adapter(tmp_path, monkeypatch, backend, cos=False)
+    tid = ad.start_image_task("画月亮", None)["task"]["task_id"]
+    result = ad.poll_image_task(tid, wait_seconds=5)
+    assert result["task"]["status"] == "completed"
+    assert result["task"]["images"][0]["url"] == "https://muse.ai/files/x.webp"
+    assert backend.chat_calls == 1, "exactly one chat fallback"
+
+
+def test_local_poll_bridge_exception_network_flavor_falls_back(tmp_path, monkeypatch):
+    class ExplodingImagesBackend:
+        def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
+            raise RuntimeError("unknown certificate verification error")
+
+        def chat(self, message, session_id, timeout):
+            return {"ok": True, "reply": "no links this time"}
+
+    ad = _local_adapter(tmp_path, monkeypatch, ExplodingImagesBackend(), cos=False)
+    tid = ad.start_image_task("画", None)["task"]["task_id"]
+    result = ad.poll_image_task(tid, wait_seconds=5)
+    assert result["task"]["status"] == "completed"   # answered, no media yet
+    assert result["task"]["images"] == []
+
+
+def test_local_first_send_carries_upload_slot(tmp_path, monkeypatch):
+    """With COS configured, polling goes through the chat turn and the FIRST
+    message must already carry the presigned slot — Muse's default post-draw
+    route (files.upload) stalls on per-file approval cards, so it must be
+    told to cURL from the very first send."""
+    captured = {}
+
+    class ChatBackend:
+        def chat(self, message, session_id, timeout):
+            captured["message"] = message
+            return {"ok": True, "reply": "画好了"}
+
+    ad = _local_adapter(tmp_path, monkeypatch, ChatBackend())
+    tid = ad.start_image_task("画一轮圆月", None)["task"]["task_id"]
+    ad.poll_image_task(tid, wait_seconds=3)
+    assert "画一轮圆月" in captured["message"]
+    assert "curl -X PUT" in captured["message"]
+    assert "![图片](https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/" in captured["message"]
+
+    # and without COS the first send stays a bare prompt (official route)
+    captured.clear()
+
+    class ImagesBackend:
+        def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
+            captured["message"] = message
+            return {"ok": True, "status": "timeout", "reply": "", "images": [], "approvals": []}
+
+    ad2 = _local_adapter(tmp_path, monkeypatch, ImagesBackend(), cos=False)
+    tid2 = ad2.start_image_task("画一轮圆月", None)["task"]["task_id"]
+    ad2.poll_image_task(tid2, wait_seconds=3)
+    assert captured["message"] == "画一轮圆月"
+
+
+def test_local_poll_nonnetwork_failure_never_falls_back(tmp_path, monkeypatch):
+    class BadRequestBackend:
+        def __init__(self):
+            self.chat_calls = 0
+
+        def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
+            return {"ok": False, "error": "HTTP 400: session id malformed"}
+
+        def chat(self, message, session_id, timeout):
+            self.chat_calls += 1
+            return {"ok": True, "reply": "x"}
+
+    backend = BadRequestBackend()
+    ad = _local_adapter(tmp_path, monkeypatch, backend, cos=False)
+    tid = ad.start_image_task("画", None)["task"]["task_id"]
+    result = ad.poll_image_task(tid, wait_seconds=5)
+    assert result["task"]["status"] == "failed"
+    assert "HTTP 400" in result["task"]["error"]
+    assert backend.chat_calls == 0, "non-network failures fail fast"
+
+
+def test_local_poll_both_channels_down_stays_retryable(tmp_path, monkeypatch):
+    class DeadBackend:
+        def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
+            return {"ok": False, "error": "certificate verification error"}
+
+        def chat(self, message, session_id, timeout):
+            raise RuntimeError("connect timed out")
+
+    ad = _local_adapter(tmp_path, monkeypatch, DeadBackend(), cos=False)
+    tid = ad.start_image_task("画", None)["task"]["task_id"]
+    result = ad.poll_image_task(tid, wait_seconds=5)
+    assert result["task"]["status"] == "timeout", "both down must stay re-pollable"
+
+
 # ------------------------------------------------ ssh backend: text-link harvest
 
 class FakeSshBackend:
@@ -498,8 +623,8 @@ def test_cosign_presign_format():
 
 
 def test_adapter_presign_wired(tmp_path, monkeypatch):
-    """With COS configured, the nudge must carry a presigned PUT + public URL,
-    and both must flow into the backend call."""
+    """With COS configured, the nudge must carry a presigned PUT and the
+    message must show both the cURL command and the public Markdown link."""
     from muse_agent import tasks as tm
 
     bridge = tmp_path / "bridge"
@@ -514,9 +639,9 @@ def test_adapter_presign_wired(tmp_path, monkeypatch):
     captured = {}
 
     class Backend:
-        def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
-            captured.update(message=message, upload_url=upload_url, media_domain=media_domain)
-            return {"ok": True, "status": "timeout", "reply": "", "images": [], "approvals": []}
+        def chat(self, message, session_id, timeout):
+            captured["message"] = message
+            return {"ok": True, "reply": ""}
 
     ad.backend = Backend()
     started = ad.start_image_task("draw", None)
@@ -525,7 +650,6 @@ def test_adapter_presign_wired(tmp_path, monkeypatch):
     ad._tasks.update(tid, sent_prompt=True)   # force the nudge path
     ad.poll_image_task(tid, wait_seconds=3)
     assert "curl -X PUT" in captured["message"]
-    assert captured["upload_url"].startswith(
-        "https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/")
-    assert "q-signature=" in captured["upload_url"]
-    assert captured["media_domain"] == "muse-t.cos.ap-guangzhou.myqcloud.com"
+    assert "不要重新画" in captured["message"]
+    assert "q-signature=" in captured["message"]
+    assert "![图片](https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/" in captured["message"]
