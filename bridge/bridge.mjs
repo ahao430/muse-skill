@@ -20,7 +20,8 @@ function parseArgs(argv) {
   const opts = {};
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--session' || a === '--timeout' || a === '--directory') {
+    if (a === '--session' || a === '--timeout' || a === '--directory'
+        || a === '--upload-url' || a === '--media-domain') {
       opts[a.slice(2)] = argv[++i];
     } else if (a.startsWith('--')) {
       opts[a.slice(2)] = true;
@@ -158,6 +159,16 @@ async function chatCollect(message, chatOpts) {
   } finally {
     try { sub?.close(); } catch { /* already closed by abort */ }
     client.close();
+  }
+  // Muse often answers with the link as plain text rather than a card;
+  // harvest muse.ai/files and configured-media-domain URLs from the reply.
+  if (reply) {
+    const domain = String(chatOpts.mediaDomain ?? '').replace(/\./g, '\\.');
+    const rx = new RegExp(
+      'https://(?:muse\\.ai/files/[\\w./-]+|' + (domain ? domain + '/[\\w./-]+' : '') + ')', 'g');
+    for (const u of reply.match(rx) ?? []) {
+      addImage({ url: u, label: '', mime: u.endsWith('.png') ? 'image/png' : 'image/webp' });
+    }
   }
   return {
     status: sendError ? 'failed' : (timedOut ? 'timeout' : 'completed'),
@@ -341,20 +352,30 @@ async function main() {
     try {
       let result;
       try {
-        result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs, rootOpts: opts });
+        result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs, rootOpts: opts, mediaDomain: opts.mediaDomain });
       } catch (e) {
         if (!/HTTP (400|404)/.test(String(e?.message))) throw e;
-        result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs, first: true, rootOpts: opts });
+        result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs, first: true, rootOpts: opts, mediaDomain: opts.mediaDomain });
       }
       // Muse renders into its sandbox (no public URLs yet). Unless the ask
-      // was itself an upload/reshare request, chain a second turn asking
-      // Muse to re-share the media as public muse.ai/files links.
-      const isReshareAsk = /muse\.ai\/files|转存|上传/i.test(message);
+      // was itself an upload/reshare request, chain a second turn ferrying
+      // the media out: presigned COS upload when provided, else the
+      // muse.ai/files re-share.
+      const isReshareAsk = /muse\.ai\/files|转存|上传|预签名|curl -X PUT/i.test(message);
       if (result.status === 'completed' && result.images.length === 0 && !isReshareAsk) {
+        let shareMsg = '把刚才生成的图片上传为公网可访问的 muse.ai/files 链接，只发链接。';
+        if (opts.uploadUrl) {
+          const u = new URL(opts.uploadUrl);
+          const publicUrl = u.origin + u.pathname;
+          shareMsg = '把刚才生成的图片用 curl 上传到这个预签名地址（不要重新画）：\n'
+            + `curl -X PUT --data-binary @图片文件 '${opts.uploadUrl}'\n`
+            + `上传成功后回复这个直链：${publicUrl}`;
+        }
         const share = await chatCollect(
-          '把刚才生成的图片上传为公网可访问的 muse.ai/files 链接，只发链接。',
+          shareMsg,
           { sessionId: opts.session, ownsChat: true,
-            timeoutMs: Math.min(timeoutMs, 240000), rootOpts: opts });
+            timeoutMs: Math.min(timeoutMs, 240000), rootOpts: opts,
+            mediaDomain: opts.mediaDomain });
         result.images.push(...share.images);
         result.approvals.push(...share.approvals);
         if (!result.reply) result.reply = share.reply;

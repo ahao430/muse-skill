@@ -56,7 +56,7 @@ class FakeBackend:
     def __init__(self):
         self.sent = []
 
-    def images(self, message, session_id, timeout):
+    def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
         self.sent.append(message)
         # First call: Muse still generating → timeout; second: shares link.
         if len(self.sent) == 1:
@@ -122,7 +122,7 @@ def test_approval_required_state(adapter, tmp_path):
     adapter.backend.sent = []
 
     class ApprovalBackend(FakeBackend):
-        def images(self, message, session_id, timeout):
+        def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
             self.sent.append(message)
             return {"ok": True, "status": "completed", "reply": "",
                     "images": [],
@@ -357,3 +357,56 @@ def test_adapter_notifications_seen_state(tmp_path, monkeypatch):
     second = ad.notifications(0)   # same ids again → filtered by seen-state
     assert second["messages"] == [] and second["images"] == []
     assert (tmp_path / "notifications-seen.json").exists()
+
+
+# ---------------------------------------------------------------- cosign
+
+def test_cosign_presign_format():
+    from muse_agent.cosign import presign_url
+
+    url = presign_url("PUT", "bkt.cos.ap-guangzhou.myqcloud.com",
+                      "muse-media/x/y.webp", "AKIDTEST", "secret", expires=600)
+    assert url.startswith("https://bkt.cos.ap-guangzhou.myqcloud.com/muse-media/x/y.webp?")
+    for part in ("q-sign-algorithm=sha1", "q-ak=AKIDTEST",
+                 "q-header-list=", "q-url-param-list=", "q-signature="):
+        assert part in url
+    # deterministic for same inputs, differs per key
+    url2 = presign_url("PUT", "bkt.cos.ap-guangzhou.myqcloud.com",
+                       "muse-media/x/y.webp", "AKIDTEST", "secret", expires=600)
+    url3 = presign_url("PUT", "bkt.cos.ap-guangzhou.myqcloud.com",
+                       "muse-media/x/other.webp", "AKIDTEST", "secret", expires=600)
+    assert url == url2 and url != url3
+
+
+def test_adapter_presign_wired(tmp_path, monkeypatch):
+    """With COS configured, the nudge must carry a presigned PUT + public URL,
+    and both must flow into the backend call."""
+    from muse_agent import tasks as tm
+
+    bridge = tmp_path / "bridge"
+    bridge.mkdir()
+    (bridge / "bridge.mjs").write_text("//")
+    monkeypatch.setattr(tm.TaskStore, "_load", lambda self: None)
+    monkeypatch.setattr(tm.TaskStore, "_save", lambda self: None)
+    cfg = Config(backend="local", bridge_dir=str(bridge),
+                 cos_bucket_domain="muse-t.cos.ap-guangzhou.myqcloud.com",
+                 cos_secret_id="AKIDX", cos_secret_key="K")
+    ad = GadgetAdapter(cfg)
+    captured = {}
+
+    class Backend:
+        def images(self, message, session_id, timeout, upload_url=None, media_domain=None):
+            captured.update(message=message, upload_url=upload_url, media_domain=media_domain)
+            return {"ok": True, "status": "timeout", "reply": "", "images": [], "approvals": []}
+
+    ad.backend = Backend()
+    started = ad.start_image_task("draw", None)
+    tid = started["task"]["task_id"]
+    ad._tasks.tasks[tid] = {**started["task"], "images": []}
+    ad._tasks.update(tid, sent_prompt=True)   # force the nudge path
+    ad.poll_image_task(tid, wait_seconds=3)
+    assert "curl -X PUT" in captured["message"]
+    assert captured["upload_url"].startswith(
+        "https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/")
+    assert "q-signature=" in captured["upload_url"]
+    assert captured["media_domain"] == "muse-t.cos.ap-guangzhou.myqcloud.com"

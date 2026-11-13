@@ -66,10 +66,11 @@ def _download_task_images(task_id: str, images: list[dict]) -> None:
     repeated poll never re-downloads."""
     import os
 
+    allowed = ("https://muse.ai/", "https://" + (_adapter.config.media_domain + "/") if _adapter.config.media_domain else "")
     for index, img in enumerate(images):
         if img.get("path") and os.path.exists(img["path"]):
             continue
-        if not img.get("url", "").startswith("https://muse.ai/"):
+        if not img.get("url", "").startswith(allowed):
             continue
         try:
             img["path"] = _download_image(img["url"], task_id, index)
@@ -297,7 +298,8 @@ async def muse_notifications(wait_seconds: int = 8, return_image: bool = True) -
         entry = {"label": img.get("label", ""), "url": img.get("url", ""),
                  "path": "", "inline": False}
         meta["images"].append(entry)
-        if not return_image or not img.get("url", "").startswith("https://muse.ai/"):
+        allowed_n = ("https://muse.ai/", "https://" + (_adapter.config.media_domain + "/") if _adapter.config.media_domain else "")
+        if not return_image or not img.get("url", "").startswith(allowed_n):
             continue
         try:
             path = await _call(_download_image, img["url"], "notifications", index)

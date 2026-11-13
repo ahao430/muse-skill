@@ -288,6 +288,12 @@ host: root@example.com  # backend: ssh 时的 gadget 主机
 timeout: 120            # muse_chat 默认等待秒数（上限 600）
 bridge_command: bun     # bridge/bridge.mjs 的运行器（node ≥22.18 也可）
 # credentials_dir: …    # muse-client 凭证目录覆盖（默认 ~/Library/Application Support/MuseGadgetPair）
+
+# COS 图片中转（可选，推荐）：Mac 持密钥预签名，Muse 零凭证 curl 上传，
+# 绕开 muse.ai/files 的逐文件上传审批（myqcloud 域一次 allow_always 即永久）
+# cos_bucket_domain: muse-xxx.cos.ap-guangzhou.myqcloud.com
+# cos_secret_id: AKID…      # 子账号（仅该 bucket 数据读写）
+# cos_secret_key: …         # 只放本文件（.gitignore 已排除），永不进 Muse/git
 ```
 
 ## 五、排错

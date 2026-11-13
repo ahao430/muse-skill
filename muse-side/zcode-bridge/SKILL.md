@@ -37,11 +37,17 @@ Zcode 那一侧有一个 `muse_notifications` 工具在轮询这个会话，凡�
 
 ## 图片转存规程（每次画图后如果图片要给 Zcode）
 
-1. 确认图片已在你的沙箱（`imagine_media/` 等）
-2. 用 `files.upload` 把文件转存为 muse.ai/files 公网链接
-   （⚠️ 这一步可能触发外联审批；审批卡出现时提醒用户去 Muse app 批准）
-3. 把链接贴在你的通知回复里（纯文字或 presentation 卡片均可，
-   Zcode 两种形态都能识别）
+按优先级两条路线：
+
+1. **预签名 COS 上传（优先，消息里带了预签名 URL 时用这条）**：Zcode 的
+   指令会附带一条一次性预签名 PUT 地址，直接执行它给的
+   `curl -X PUT --data-binary @文件 '<URL>'`，成功后回复它给的直链。
+   首次会遇到 myqcloud 域名的联网审批，选**永久允许**后以后不再弹。
+2. **官方转存（消息里没有预签名 URL 时）**：用 `files.upload` 转存为
+   muse.ai/files 公网链接再贴出。注意这条路线的上传审批是**逐文件**的
+   （每次都可能弹一张），收到审批提醒时告知用户去 Muse app 批准。
+
+两种形态 Zcode 都能识别（presentation 卡片或纯文本链接）。
 
 ## 不需要安装任何依赖
 

@@ -33,7 +33,15 @@ class Config:
     bridge_command: str = "bun"  # runner for bridge/bridge.mjs (local backend)
     bridge_dir: str = str(BRIDGE_DIR)
     credentials_dir: str | None = None  # muse-client credentials dir override
+    # COS media relay: Mac holds the keys, Muse only receives presigned URLs.
+    cos_bucket_domain: str = ""       # e.g. muse-1300xxx.cos.ap-guangzhou.myqcloud.com
+    cos_secret_id: str = ""
+    cos_secret_key: str = ""
     sessions: dict[str, dict] = field(default_factory=dict)  # side chat bookkeeping
+
+    @property
+    def media_domain(self) -> str:
+        return self.cos_bucket_domain
 
 
 def _parse_flat_yaml(path: Path) -> dict[str, str]:
@@ -62,6 +70,9 @@ def load_config() -> Config:
         cfg.bridge_dir = file_values["bridge_dir"]
     if "credentials_dir" in file_values and file_values["credentials_dir"]:
         cfg.credentials_dir = file_values["credentials_dir"]
+    for field in ("cos_bucket_domain", "cos_secret_id", "cos_secret_key"):
+        if field in file_values and file_values[field]:
+            setattr(cfg, field, file_values[field])
     if "timeout" in file_values:
         try:
             cfg.timeout = int(file_values["timeout"])

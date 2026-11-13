@@ -76,12 +76,18 @@ class LocalBackend:
             args += ["--directory", self.config.credentials_dir]
         return self._run(args, timeout=listen_seconds + 30)
 
-    def images(self, prompt: str | None, session_id: str, timeout: int | None) -> dict:
-        """Ask Muse to (re)share generated media as public links, collect them."""
+    def images(self, prompt: str | None, session_id: str, timeout: int | None,
+               upload_url: str | None = None, media_domain: str | None = None) -> dict:
+        """Ask Muse to generate (or re-share) media, collect public links.
+        upload_url/media_domain wire the presigned-COS relay through."""
         args = ["images"]
         if prompt:
             args.append(prompt)
         args += ["--timeout", str(timeout or 240), "--session", session_id]
+        if upload_url:
+            args += ["--upload-url", upload_url]
+        if media_domain:
+            args += ["--media-domain", media_domain]
         if self.config.credentials_dir:
             args += ["--directory", self.config.credentials_dir]
         return self._run(args, timeout=(timeout or 240) + 60)

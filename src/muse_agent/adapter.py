@@ -10,6 +10,7 @@ Sessions (side-chat bookkeeping) are backend-independent local state.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -132,15 +133,25 @@ class GadgetAdapter:
         # arrive late (or be re-presented on request), so re-polls absorb
         # newly seen links instead of short-circuiting on the old state.
         # First poll delivers the original prompt; later polls must NOT
-        # regenerate and must NOT re-upload (each upload burns an egress
-        # approval) — just ask Muse to re-present the existing file card.
+        # regenerate — they only ferry media out (presigned COS upload when
+        # configured, else Muse's own muse.ai/files re-share).
+        upload = self._presign_upload()
         message = task["prompt"]
         if task.get("sent_prompt"):
-            message = ("请把刚才生成图片的 muse.ai/files 文件卡片链接再发一次"
-                       "（贴在回复里即可，不要重新上传，不要重新画）。")
+            if upload:
+                message = (
+                    "把刚才生成的图片用 curl 上传到这个预签名地址（不要重新画）：\n"
+                    f"curl -X PUT --data-binary @文件 '{upload['put_url']}'\n"
+                    f"上传成功后回复直链：{upload['public_url']}"
+                )
+            else:
+                message = ("请把刚才生成图片的 muse.ai/files 文件卡片链接再发一次"
+                           "（贴在回复里即可，不要重新上传，不要重新画）。")
         self._tasks.update(task_id, sent_prompt=True, status="pending")
         try:
-            payload = self.backend.images(message, task["session_id"], wait_seconds)
+            payload = self.backend.images(message, task["session_id"], wait_seconds,
+                                          upload_url=upload and upload["put_url"],
+                                          media_domain=self.config.media_domain)
         except Exception as exc:  # noqa: BLE001 — bridge crash must not lose the task
             self._tasks.update(task_id, status="timeout",
                                error=f"bridge error: {exc}")
@@ -201,6 +212,19 @@ class GadgetAdapter:
             seen_path.parent.mkdir(parents=True, exist_ok=True)
             seen_path.write_text(json.dumps(sorted(seen)[-400:]))
         return {"ok": True, "messages": fresh_messages, "images": fresh_images}
+
+    def _presign_upload(self) -> dict | None:
+        """Fresh presigned PUT + matching public URL, or None when COS isn't
+        configured (falls back to the muse.ai/files route)."""
+        cfgx = self.config
+        if not (cfgx.cos_bucket_domain and cfgx.cos_secret_id and cfgx.cos_secret_key):
+            return None
+        from .cosign import presign_url
+
+        key = f"muse-media/{time.strftime('%Y%m%d')}/{uuid.uuid4().hex[:12]}.webp"
+        put_url = presign_url("PUT", cfgx.cos_bucket_domain, key,
+                              cfgx.cos_secret_id, cfgx.cos_secret_key, expires=3600)
+        return {"put_url": put_url, "public_url": f"https://{cfgx.cos_bucket_domain}/{key}"}
 
     def doctor(self) -> dict:
         return self.backend.doctor()
