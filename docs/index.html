@@ -60,7 +60,8 @@
     <span class="badge"><b>✓ 端到端验证</b> 文字 / 新会话 / 图片</span>
     <span class="badge">MCP + Agent Skills</span>
     <span class="badge">双后端 local / ssh</span>
-    <span class="badge">一次配对 · 零硬件</span>
+    <span class="badge">一次配对 · 手机即退役</span>
+    <span class="badge">Mac / Linux / Windows</span>
   </div>
   <div class="cta">
     <a class="btn primary" href="https://github.com/ahao430/muse-skill#readme">GitHub 仓库</a>
@@ -88,13 +89,14 @@
   <div class="cols">
     <div class="card">
       <div class="route">路线 A · Mac 直连 <span class="rec">推荐 · 已验证</span></div>
-      <p>社区 <a href="https://github.com/wong2/muse-client">muse-client</a>（官方协议 TS 移植），Mac 内置蓝牙配对，零额外硬件。按需连接，5 分钟打通。不注册任何本机命令，Muse 只能和你聊天。</p>
+      <p>社区 <a href="https://github.com/wong2/muse-client">muse-client</a>（官方协议 TS 移植），Mac 内置蓝牙配对，零额外硬件。<b>配对后手机彻底退役</b>——App 可关可卸载，Mac 凭凭证直连 Muse 云端。不注册任何本机命令，Muse 只能和你聊天。</p>
     </div>
     <div class="card">
       <div class="route">路线 B · Linux 常驻 <span class="opt">24/7</span></div>
-      <p>官方 <a href="https://github.com/facebookincubator/muse-gadget-sdk">muse-gadget-sdk</a> 跑在云主机/树莓派，systemd 常驻。Muse 可获得 <code>system.run</code>/<code>file.*</code> 远端命令能力（可裁剪）。Mac 关机也能收发。</p>
+      <p>官方 <a href="https://github.com/facebookincubator/muse-gadget-sdk">muse-gadget-sdk</a> 跑在云主机/树莓派，systemd 常驻，Muse 可执行 <code>system.run</code>/<code>file.*</code>（可裁剪）。<b>授权只做一次</b>：在一台有蓝牙的 Linux（需 USB 蓝牙适配器，或自带蓝牙的树莓派/笔记本）配对，凭证导入常驻主机后配对机即退役。</p>
     </div>
   </div>
+  <p class="lead" style="margin-top:16px">两条路线都支持 <b>Windows</b> 运行：配对凭证可跨机迁移，借一台有蓝牙的机器（Mac / WSL2）授权一次，之后 Windows 独立收发（配对动作本身仅 macOS/Linux 支持）。切换 <code>backend: local | ssh</code> 一行配置，MCP 工具面完全一致。</p>
   <p class="lead" style="margin-top:16px">切换 <code>backend: local | ssh</code> 一行配置，MCP 工具面完全一致。</p>
 </section>
 

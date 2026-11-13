@@ -33,7 +33,8 @@
 
 | | 路线 A：local | 路线 B：ssh |
 |---|---|---|
-| 配对 | **Mac 本机**，内置蓝牙，零硬件 | 任意有 BLE 的 Linux（WSL2+USB 蓝牙 / 树莓派）配对一次，凭证导入云主机 |
+| 配对 | **Mac 本机**，内置蓝牙，零硬件 | 在任意有 BLE 的 Linux 配对一次（**需要 USB 蓝牙适配器**，或树莓派等自带蓝牙的机器） |
+| 配对之后 | **手机不再需要**（App 可删可离线） | **配对机即可退役**，凭证导入常驻主机后它不再参与 |
 | 运行 | MCP 进程按需连接，随 Mac 睡眠而断 | 云主机 systemd 常驻，24/7 在线 |
 | SDK | [muse-client](https://github.com/wong2/muse-client)（社区 TS 移植，Apache-2.0） | 官方 [muse-gadget-sdk](https://github.com/facebookincubator/muse-gadget-sdk) linux/ |
 | Muse 可执行本机命令 | ❌ 不注册任何本地命令（更安全） | ✅ `system.run` / `file.*`（可选裁剪） |
@@ -41,6 +42,31 @@
 
 **选择建议**：先用路线 A，5 分钟打通；需要 24/7 或让 Muse 操作远端机器时，
 再按方式二把凭证导入云主机，切 `backend: ssh`。
+
+### 路线说明（重要）
+
+- **路线 A：打通之后就不需要手机了。** 蓝牙只在配对那 2 分钟用一次；此后
+  Mac 凭保存的凭证直连 Muse 云端 VM，Muse app 不用开着、可以离线、甚至
+  卸载都不影响本 skill 收发（只要别在 app 里删除这台设备）。
+- **路线 B：授权只需在一台 Linux 上获取一次，之后那台机器即可退役。**
+  前提是这台**配对机**必须有蓝牙（云主机没有，需插 USB 蓝牙适配器；树莓
+  派/笔记本自带即可）。凭证（`identity.json`+`pairing.json`）导入常驻主机
+  后，配对机不再参与任何环节。
+
+### Windows 也能用
+
+两条路线都支持 Windows——核心原因是**配对凭证可跨机迁移**，而聊天运行时
+本身是跨平台的：
+
+| 场景 | 做法 |
+|---|---|
+| Windows 上跑**路线 A**（local） | 在任意 Mac（或 WSL2）配对一次 → 把凭证目录拷到 Windows → 配置 `credentials_dir` 指向它。macOS 配对机拷 `~/Library/Application Support/MuseGadgetPair/`；WSL2 配对机拷 `/var/lib/musegadget/`。运行需要 [bun](https://bun.sh)（或 Node ≥22.18）+ 仓库 `uv run` |
+| Windows 上跑**路线 B**（ssh） | Windows 本身只当 MCP 客户端；gadget 主机仍是 Linux（WSL2 也行：musegadget 装在 WSL2 里，ssh 后端指向它），或按上表导入云主机 |
+
+注意：配对工具本身仅支持 macOS（`pairMacOS`）与 Linux（官方 SDK），
+**Windows 上无法直接配对**——所以是"借一台机器授权一次，之后 Windows
+独立运行"。路线 A 的 Windows 聊天运行时未实测（依赖均为纯 JS，理论上
+可用），遇到问题欢迎提 issue。
 
 ### 两种模式的能力差异（授权之外）
 
