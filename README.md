@@ -332,6 +332,8 @@ bridge_proxy: http://127.0.0.1:7897  # 国内网络必配：免 TUN 走代理
 | COS 上传 `403 SignatureDoesNotMatch` | `cos_secret_key` 不配对/被污染：自查应为 **36 位纯字母数字**（注意 config 追加内容别粘连到上一行），然后跑 A3 的自测命令，PUT 200 才算好 |
 | Muse 无视预签名地址、仍走 muse.ai 转存 | 没装或没更新 [muse-side/zcode-bridge](muse-side/README.md) 技能——把 zip 发给 Muse 装上 |
 | `chat` 超时但 app 里能看到回复 | 消息发到了主聊天（回复无法归属被丢弃）——用 agent 默认 side chat 或显式 `--session <uuid>` |
+| 同一会话反复超时、新会话秒回 | **会话积压**（高频自动化测试后常见）：该会话消息队列被塞满，旧会话慢慢消化，新会话立即响应——`muse_sessions` 开新会话重发即可（agent 的 SKILL.md 已内置此轮换规则） |
+| Muse 拒画某题材（回复"这张没能画出来"） | Muse 自带内容审核，暴力类描述（如"打架"）会被拒，且它通常主动给出温和替代方案——接受替代或换个描述，别原样重发 |
 | `HTTP 400` on side chat | Muse 只接受 **UUID 格式**的 session id，用 `muse_sessions` 生成 |
 | 换了 SDK token 后连不上 | 凭证与签发时的 token 绑定：先 unpair 再重新 pair |
 | ssh 后端不可达 | `scripts/provision.sh` 部署；`musegadget info` / `doctor` 排查 |

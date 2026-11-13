@@ -34,6 +34,15 @@ Send messages to Muse and receive answers (text and images), through the
    (max 600s). If it times out, the message **was still delivered** — Muse may
    answer later; retry `muse_chat` with a longer timeout instead of assuming
    failure.
+4. **Repeated timeouts on one session = backlog, not failure.** A side chat
+   that received many rapid requests builds up a queued Muse side: it keeps
+   timing out while a fresh chat answers instantly. After 2–3 consecutive
+   timeouts in the same session, stop retrying there — create a new session
+   (`muse_sessions(label="retry")`) and resend. For image tasks start a *new*
+   task in the new session (the old one stays resumable if the old session
+   ever drains). Muse also refuses some subjects itself (e.g. violence) —
+   it usually offers milder alternatives; accept one instead of re-sending
+   the same prompt.
 
 ## Workflows
 
