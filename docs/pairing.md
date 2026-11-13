@@ -1,7 +1,7 @@
 # Muse 配对与授权（一次性）
 
 本文档独立说明如何完成 Muse 的 BLE 配对。**配对只需做一次**。
-推荐路径是 **Mac 本机配对**（方式一，无需任何额外硬件）。
+推荐路径是 **Mac 本机配对**（路线 A，无需任何额外硬件）。
 
 ## 0. 前置条件
 
@@ -12,7 +12,7 @@
 - **网络**：配对时手机必须能访问 `hatch-api.meta.ai`（Meta 域名，国内
   网络可能需要手机和电脑都挂代理）。
 
-## 方式一（推荐）：Mac 本机蓝牙配对
+## 路线 A（推荐）：Mac 本机蓝牙配对
 
 使用社区 [muse-client](https://github.com/wong2/muse-client)（Apache-2.0，
 官方 Gadget SDK 协议的 TypeScript 实现，支持 macOS CoreBluetooth 配对）。
@@ -44,7 +44,7 @@ bun bridge/bridge.mjs pair
 > 排错：配对卡在 Wi-Fi 之后 → 多半是手机访问 `hatch-api.meta.ai` 不通，
 > 检查手机代理。换 SDK token 后需先 unpair 再重新 pair（见 muse-client CLI）。
 
-## 方式二（可选后端）：Linux gadget 主机
+## 路线 B（可选后端）：Linux SDK gadget 主机
 
 若需要 24/7 常驻（Mac 关机也能收发），改用云主机跑官方 musegadget：
 
