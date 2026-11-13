@@ -46,4 +46,5 @@ no dependencies, no activation, no server.
 - `403 SignatureDoesNotMatch` → `cos_secret_key` is wrong or glued to the
   previous line in config.yaml; run `selftest` after fixing (PUT 200 = good).
 - Not configured? Tell the user to fill the three `cos_*` fields in
-  `~/.config/muse-agent/config.yaml` (muse-skill README, route A3).
+  `~/.config/muse-agent/config.yaml` — full console walkthrough (bucket,
+  CAM sub-account key, config file) in the muse-skill repo's docs/cos.md.

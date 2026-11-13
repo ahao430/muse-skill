@@ -170,21 +170,23 @@ bun bridge/bridge.mjs status          # 应返回 "paired": true, "ready": true
 
 Muse 官方 `muse.ai/files` 转存是**逐文件人工审批**（每张图弹一卡）；换成你
 自己的 COS bucket（Mac 预签名、Muse 零凭证 curl 上传）后，**首次上传弹一次
-域名审批卡，在 app 里选"永久允许"，此后终身零弹窗**：
+域名审批卡，在 app 里选"永久允许"，此后终身零弹窗**。
 
-1. 腾讯云 COS 建 bucket（**单AZ + 标准存储 + 公有读私有写**，加密不开或只选
-   SSE-COS；多AZ/低频/归档/KMS 都不要）
-2. CAM 建子账号，只授该 bucket **数据读写**，新建 API 密钥
-3. 写入 `~/.config/muse-agent/config.yaml`（三个字段，缺一回落 muse.ai 老路）：
+**控制台一步步的操作手册（建桶怎么选、CAM 子账号密钥在哪建、配置文件
+怎么写、自测与排错）见 [docs/cos.md](docs/cos.md)**——最终往
+`~/.config/muse-agent/config.yaml` 加三行（文件已存在时务必另起一行，
+追加粘连是最常见的翻车点）：
 
-   ```yaml
-   cos_bucket_domain: muse-xxx.cos.ap-guangzhou.myqcloud.com
-   cos_secret_id: AKID…
-   cos_secret_key: …      # 36 位纯字母数字，注意别粘连换行
-   ```
+```yaml
+cos_bucket_domain: muse-xxx.cos.ap-guangzhou.myqcloud.com   # 不带 https://
+cos_secret_id: AKID…      # CAM 子账号的 API 密钥（别用主账号的）
+cos_secret_key: …         # 32–36 位纯字母数字，创建时只显示一次
+```
 
-4. 自测（PUT 200 才算配好）：`uv run python -c "from muse_agent.config import load_config as l; from muse_agent.cosign import presign_url as p; import urllib.request as u; c=l(); r=u.Request(p('PUT',c.cos_bucket_domain,'muse-media/selftest.txt',c.cos_secret_id,c.cos_secret_key,600),data=b'ok',method='PUT'); print('PUT',u.urlopen(r,timeout=20).status)"`
+收尾两步：
 
+4. 自测：`python3 skills/cos/cos.py selftest` → 看到 `selftest PASS`
+   （PUT 200 + 匿名 GET 200）才算配好
 5. 给 Muse 装 [muse-side/zcode-bridge](muse-side/README.md) 技能（zip 发进
    聊天即可）——不装的话 Muse 会无视预签名地址、退回官方转存
 6. **首次让 Muse 上传时会弹一张审批卡**（`curl` 访问 myqcloud.com 的域名级
