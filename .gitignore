@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+dist/
+*.egg-info/
+# Muse secrets and local state — never commit
+.env
+*.token
+config.yaml
+out/

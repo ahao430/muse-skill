@@ -1,0 +1,90 @@
+"""Configuration for the Muse agent MCP server.
+
+Settings come from (highest priority first):
+  1. Environment variables (MUSE_AGENT_HOST, MUSE_AGENT_TIMEOUT)
+  2. ~/.config/muse-agent/config.yaml  (simple flat keys, parsed without PyYAML)
+  3. Defaults
+
+The YAML is intentionally minimal: flat ``key: value`` lines only.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+
+CONFIG_DIR = Path(os.environ.get("MUSE_AGENT_CONFIG_DIR", "~/.config/muse-agent")).expanduser()
+CONFIG_FILE = CONFIG_DIR / "config.yaml"
+SESSIONS_FILE = CONFIG_DIR / "sessions.json"
+
+DEFAULT_HOST = "root@2607:9d00:2000:143::31b0:2854"  # ssh syntax: bare IPv6, no brackets
+DEFAULT_TIMEOUT = 120  # seconds; musegadget --wait caps at 600
+
+
+@dataclass
+class Config:
+    host: str = DEFAULT_HOST
+    timeout: int = DEFAULT_TIMEOUT
+    connect_timeout: int = 10
+    default_session: str | None = None  # None = main chat
+    sessions: dict[str, dict] = field(default_factory=dict)  # side chat bookkeeping
+
+
+def _parse_flat_yaml(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.exists():
+        return values
+    for line in path.read_text().splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def load_config() -> Config:
+    cfg = Config()
+    file_values = _parse_flat_yaml(CONFIG_FILE)
+    if "host" in file_values:
+        cfg.host = file_values["host"]
+    if "timeout" in file_values:
+        try:
+            cfg.timeout = int(file_values["timeout"])
+        except ValueError:
+            pass
+    if "connect_timeout" in file_values:
+        try:
+            cfg.connect_timeout = int(file_values["connect_timeout"])
+        except ValueError:
+            pass
+    if "default_session" in file_values and file_values["default_session"] not in ("", "main"):
+        cfg.default_session = file_values["default_session"]
+    cfg.host = os.environ.get("MUSE_AGENT_HOST", cfg.host)
+    if "MUSE_AGENT_TIMEOUT" in os.environ:
+        try:
+            cfg.timeout = int(os.environ["MUSE_AGENT_TIMEOUT"])
+        except ValueError:
+            pass
+    return cfg
+
+
+def load_sessions() -> dict[str, dict]:
+    import json
+
+    if SESSIONS_FILE.exists():
+        try:
+            data = json.loads(SESSIONS_FILE.read_text())
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def save_sessions(sessions: dict[str, dict]) -> None:
+    import json
+
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    SESSIONS_FILE.write_text(json.dumps(sessions, indent=2, ensure_ascii=False))

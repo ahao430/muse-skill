@@ -1,0 +1,119 @@
+"""MCP stdio server exposing Muse tools to coding agents."""
+
+from __future__ import annotations
+
+import sys
+
+from mcp.server.fastmcp import FastMCP
+
+from .adapter import GadgetAdapter, MuseUnavailable, NotPaired
+
+mcp = FastMCP("muse-agent")
+_adapter = GadgetAdapter()
+
+
+def _adapter_error_text(exc: Exception) -> str:
+    if isinstance(exc, NotPaired):
+        return (
+            f"Muse gadget host is not paired yet: {exc}. "
+            "Complete the one-time BLE pairing described in docs/pairing.md, "
+            "then run scripts/import_state.sh."
+        )
+    if isinstance(exc, MuseUnavailable):
+        return (
+            f"Cannot reach the Muse gadget host: {exc}. "
+            "Check SSH access and that the musegadget service is running "
+            "(scripts/provision.sh sets it up)."
+        )
+    return str(exc)
+
+
+@mcp.tool()
+async def muse_status() -> dict:
+    """Check the Muse connection: host, service state, pairing identity.
+
+    Use this first to verify the gadget host is reachable and paired.
+    """
+    try:
+        return _adapter.status()
+    except (MuseUnavailable, NotPaired) as exc:
+        return {"ready": False, "error": _adapter_error_text(exc)}
+
+
+@mcp.tool()
+async def muse_send(message: str, session_id: str | None = None) -> dict:
+    """Send a message to Muse without waiting for the answer.
+
+    Use for notifications or fire-and-forget updates. The reply, if any,
+    appears in the Muse chat; use muse_chat when you need the answer.
+    """
+    try:
+        result = _adapter.send(message, session_id)
+    except (MuseUnavailable, NotPaired) as exc:
+        return {"ok": False, "error": _adapter_error_text(exc)}
+    return {"ok": result.ok, "detail": result.detail}
+
+
+@mcp.tool()
+async def muse_chat(
+    message: str,
+    session_id: str | None = None,
+    timeout: int | None = None,
+) -> dict:
+    """Send a message to Muse and wait for its full answer.
+
+    Prefer a dedicated side chat session_id (see muse_sessions) so this
+    conversation does not interleave with the user's main Muse chat.
+    timeout is seconds (1-600, default from config). If Muse does not answer
+    in time, the message was still delivered; retry muse_chat rather than
+    assuming failure.
+    """
+    try:
+        result = _adapter.chat(message, session_id, timeout)
+    except (MuseUnavailable, NotPaired) as exc:
+        return {"ok": False, "error": _adapter_error_text(exc)}
+    return {"ok": result.ok, "reply": result.text, "detail": result.detail}
+
+
+@mcp.tool()
+async def muse_wait(session_id: str, timeout: int | None = None) -> dict:
+    """Not supported by the remote Muse CLI, which couples send+wait.
+
+    Use muse_chat instead: it sends and waits in a single call.
+    """
+    return {
+        "ok": False,
+        "error": "standalone wait is not supported by the musegadget CLI; use muse_chat",
+    }
+
+
+@mcp.tool()
+async def muse_sessions(label: str = "") -> dict:
+    """Create a new Muse side chat for this agent, or list existing ones.
+
+    Call without arguments to list known sessions; pass a label to create a
+    fresh side chat (a short purpose, e.g. 'code-review'). Pass its
+    session_id to muse_chat/muse_send to keep agent talk out of the main chat.
+    """
+    if label:
+        session_id = _adapter.new_session(label)
+        return {"created": session_id, "label": label}
+    return {"sessions": _adapter.list_sessions()}
+
+
+def main() -> None:
+    """Entry point: run the MCP server over stdio."""
+    if "--status" in sys.argv:  # small debug helper outside MCP
+        import json
+
+        try:
+            payload = _adapter.status()
+        except (MuseUnavailable, NotPaired) as exc:
+            payload = {"ready": False, "error": _adapter_error_text(exc)}
+        print(json.dumps(payload, indent=2, default=str))
+        return
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()
