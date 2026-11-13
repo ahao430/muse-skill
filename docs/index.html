@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Muse Agent Skill — 把 Muse 接入你的编程 Agent</title>
-<meta name="description" content="通过 MCP 和 Agent Skills 把 Meta Muse 接入 Claude Code / Zcode 等编程 agent：发消息、收回答、发图片，全链路本地，无公网服务器。">
+<meta name="description" content="通过 MCP 和 Agent Skills 把 Meta Muse 接入 Claude Code / Zcode 等编程 agent：聊天、异步画图（原生 ImageContent）、COS 零审批中转，全链路本地。">
 <style>
   :root {
     --bg: #0d1117; --panel: #161b22; --border: #30363d;
@@ -15,24 +15,29 @@
   a { color: var(--accent2); text-decoration: none; }
   a:hover { text-decoration: underline; }
   .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
-  header { padding: 72px 0 48px; text-align: center; background: radial-gradient(ellipse at top, #1b2735 0%, var(--bg) 60%); }
-  h1 { font-size: 2.6rem; letter-spacing: -0.02em; }
+  header { padding: 64px 0 44px; text-align: center; background: radial-gradient(ellipse at top, #1b2735 0%, var(--bg) 60%); }
+  .brand { display: flex; align-items: center; justify-content: center; gap: 20px; margin-bottom: 6px; }
+  .logo { width: 84px; height: 84px; border-radius: 50%; object-fit: cover;
+          border: 2px solid var(--border); box-shadow: 0 0 0 4px rgba(126,231,135,.08), 0 10px 30px rgba(0,0,0,.4); }
+  h1 { font-size: 2.4rem; letter-spacing: -0.02em; text-align: left; }
   h1 .muse { color: var(--accent); }
-  .tagline { color: var(--muted); font-size: 1.15rem; margin: 14px 0 28px; }
-  .badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .tagline { color: var(--muted); font-size: 1.05rem; margin: 6px 0 0; text-align: left; }
+  @media (max-width: 640px) { .brand { flex-direction: column; gap: 10px; } h1, .tagline { text-align: center !important; } }
+  .badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 20px; }
   .badge { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 4px 14px; font-size: .85rem; color: var(--muted); }
   .badge b { color: var(--accent); font-weight: 600; }
-  .cta { margin-top: 28px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .cta { margin-top: 24px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
   .btn { display: inline-block; padding: 10px 22px; border-radius: 8px; font-weight: 600; border: 1px solid var(--border); }
   .btn.primary { background: var(--accent); color: #0d1117; border-color: transparent; }
   section { padding: 44px 0; border-top: 1px solid var(--border); }
   h2 { font-size: 1.5rem; margin-bottom: 20px; }
   h3 { font-size: 1.05rem; margin: 18px 0 8px; color: var(--accent2); }
-  p.lead { color: var(--muted); max-width: 720px; }
+  p.lead { color: var(--muted); max-width: 760px; }
   .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
-  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+  .cols3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 720px) { .cols, .cols3 { grid-template-columns: 1fr; } }
   .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
-  .card .route { font-size: 1.15rem; font-weight: 700; margin-bottom: 6px; }
+  .card .route { font-size: 1.1rem; font-weight: 700; margin-bottom: 6px; }
   .card .route span { font-size: .8rem; font-weight: 600; border-radius: 6px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; }
   .rec { background: rgba(126,231,135,.12); color: var(--accent); }
   .opt { background: rgba(121,192,255,.12); color: var(--accent2); }
@@ -44,18 +49,20 @@
   table { width: 100%; border-collapse: collapse; font-size: .92rem; }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 600; }
-  td:first-child { color: var(--text); }
-  .arch { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; font-family: ui-monospace, monospace; font-size: .82rem; color: var(--muted); white-space: pre; overflow-x: auto; }
+  .arch { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; font-family: ui-monospace, monospace; font-size: .8rem; color: var(--muted); white-space: pre; overflow-x: auto; }
   .arch b { color: var(--accent); }
-  ol.steps { padding-left: 22px; } ol.steps li { margin: 10px 0; }
-  .gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 18px; }
-  @media (max-width: 720px) { .gallery { grid-template-columns: 1fr; } }
-  .gallery figure { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
-                    padding: 14px; margin: 0; transition: transform .18s ease, border-color .18s ease; }
+  .gallery { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
+  @media (max-width: 860px) { .gallery { grid-template-columns: repeat(2, 1fr); } }
+  .gallery figure { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+                    padding: 10px; margin: 0; transition: transform .18s ease, border-color .18s ease; }
   .gallery figure:hover { transform: translateY(-4px); border-color: var(--accent); }
-  .gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; display: block; }
-  .gallery figcaption { text-align: center; color: var(--muted); font-size: .88rem; padding-top: 12px; line-height: 1.5; }
-  .gallery figcaption small { opacity: .65; }
+  .gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; }
+  .gallery figcaption { text-align: center; color: var(--muted); font-size: .8rem; padding-top: 8px; }
+  .tabs { display: flex; gap: 10px; margin: 16px 0 18px; flex-wrap: wrap; }
+  .tab { background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+         border-radius: 10px; padding: 10px 18px; font-size: .95rem; cursor: pointer; font-weight: 600; }
+  .tab small { opacity: .7; font-weight: 400; }
+  .tab.active { color: #0d1117; background: var(--accent); border-color: transparent; }
   footer { padding: 32px 0 48px; text-align: center; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--border); }
 </style>
 </head>
@@ -67,13 +74,13 @@
          onerror="this.style.display='none'">
     <div>
       <h1><span class="muse">Muse</span> Agent Skill</h1>
-      <p class="tagline">把 Meta 的 Muse 接入 Claude Code / Zcode 等编程 Agent<br>发消息 · 收回答 · 发图片 · 跨 Agent 协作 —— 全链路本地，无公网服务器</p>
+      <p class="tagline">把 Meta 的 Muse 接入 Claude Code / Zcode 等编程 Agent<br>聊天 · 异步画图（原生 ImageContent）· COS 零审批中转 · 全链路本地</p>
     </div>
   </div>
   <div class="badges">
-    <span class="badge"><b>✓ 端到端验证</b> 文字 / 新会话 / 图片</span>
-    <span class="badge">MCP + Agent Skills</span>
-    <span class="badge">双后端 local / ssh</span>
+    <span class="badge"><b>✓ 全链路实测</b> 文字 / 画图 / COS 直链 / 通知</span>
+    <span class="badge">MCP + Agent Skills · 11 工具</span>
+    <span class="badge">画图零审批弹窗</span>
     <span class="badge">一次配对 · 手机即退役</span>
     <span class="badge">多设备共享</span>
     <span class="badge">Mac / Linux / Windows</span>
@@ -84,29 +91,16 @@
     <a class="btn" href="https://github.com/ahao430/muse-skill/blob/main/skills/muse/SKILL.md">SKILL.md</a>
   </div>
 </header>
-<style>
-  header { text-align: center; }
-  .brand { display: flex; align-items: center; justify-content: center; gap: 20px; margin-bottom: 6px; }
-  .logo { width: 84px; height: 84px; border-radius: 50%; object-fit: cover;
-          border: 2px solid var(--border); box-shadow: 0 0 0 4px rgba(126,231,135,.08), 0 10px 30px rgba(0,0,0,.4); }
-  .brand h1 { text-align: left; }
-  .brand .tagline { text-align: left; margin: 6px 0 0; font-size: 1.02rem; }
-  @media (max-width: 640px) { .brand { flex-direction: column; gap: 10px; }
-    .brand h1, .brand .tagline { text-align: center; } }
-</style>
 
 <section class="wrap">
-  <h2>架构</h2>
-  <div class="arch">Claude Code / Zcode ── MCP stdio ──> <b>muse-agent</b>（本仓库）
-                                        │
-                       backend: <b>local</b>（默认，Mac 直连）    backend: ssh（可选，Linux 常驻）
-                                        │                              │
-                    <b>muse-client</b>（TS，Mac 内置蓝牙配对一次）   <b>musegadget</b> systemd（官方 Linux SDK）
-                                        │                              │
-                                        └──────── WSS + Noise 加密会话 ────────┘
-                                                       │
-                                                    <b>Muse VM</b></div>
-  <p class="lead" style="margin-top:14px">蓝牙只在配对那一刻用一次，之后手机彻底退出链路；Mac 凭保存的设备凭证直接与 Muse 云端 VM 建立加密会话。</p>
+  <h2>画图，一步到位，零审批</h2>
+  <div class="arch">你说「让 Muse 画一只加菲猫泡温泉」
+  → <b>muse_get_images(prompt)</b>（异步任务，不阻塞）
+  → Muse 生成 → 按装在它身上的 zcode-bridge 技能，<b>curl PUT</b> 上传到你的 COS bucket
+     （Mac 预签名 URL，<b>Muse 零凭证</b>；myqcloud 域 allow_always 一次覆盖）
+  → 直链回传 → <b>原生 MCP ImageContent</b> 内联显示 + 本地落盘 + 永久直链</div>
+  <p class="lead" style="margin-top:14px">对比官方 muse.ai/files 转存（每张图弹一次人工审批），COS 中转全程零弹窗、
+  直链永久有效；未配置 COS 时自动回落官方路线。实测：小奶猫、加菲猫两次端到端，15 秒内落地。</p>
 </section>
 
 <section class="wrap">
@@ -114,125 +108,90 @@
   <div class="cols">
     <div class="card">
       <div class="route">路线 A · Mac 直连 <span class="rec">推荐 · 已验证</span></div>
-      <p>社区 <a href="https://github.com/wong2/muse-client">muse-client</a>（官方协议 TS 移植），Mac 内置蓝牙配对，零额外硬件。<b>配对后手机彻底退役</b>——App 可关可卸载，Mac 凭凭证直连 Muse 云端。不注册任何本机命令，Muse 只能和你聊天。</p>
+      <p>社区 <a href="https://github.com/wong2/muse-client">muse-client</a>（官方协议 TS 移植），Mac 内置蓝牙配对，零额外硬件。<b>配对后手机彻底退役</b>。国内网络配 <code>bridge_proxy</code> 一行走代理（proxychains4 免 TUN）。不注册任何本机命令。</p>
     </div>
     <div class="card">
-      <div class="route">路线 B · Linux 常驻 <span class="opt">24/7</span></div>
-      <p>官方 <a href="https://github.com/facebookincubator/muse-gadget-sdk">muse-gadget-sdk</a> 跑在云主机/树莓派，systemd 常驻，Muse 可执行 <code>system.run</code>/<code>file.*</code>（可裁剪）。<b>授权只做一次</b>：在一台有蓝牙的 Linux（需 USB 蓝牙适配器，或自带蓝牙的树莓派/笔记本）配对，凭证导入常驻主机后配对机即退役。</p>
+      <div class="route">路线 B · Linux 常驻 <span class="opt">24/7 · 多设备</span></div>
+      <p>官方 <a href="https://github.com/facebookincubator/muse-gadget-sdk">muse-gadget-sdk</a> systemd 常驻，服务器唯一持凭证，任意多台设备 <code>backend: ssh</code> 共用；Muse 可执行 <code>system.run</code>/<code>file.*</code>（可裁剪）。<b>授权一次，配对机即退役</b>（需 USB 蓝牙）。</p>
     </div>
   </div>
-  <p class="lead" style="margin-top:16px">两条路线都支持 <b>Windows</b> 运行：配对凭证可跨机迁移，借一台有蓝牙的机器（Mac / WSL2）授权一次，之后 Windows 独立收发（配对动作本身仅 macOS/Linux 支持）。切换 <code>backend: local | ssh</code> 一行配置，MCP 工具面完全一致。</p>
-  <p class="lead" style="margin-top:16px">切换 <code>backend: local | ssh</code> 一行配置，MCP 工具面完全一致。</p>
+  <p class="lead" style="margin-top:16px">配对凭证可迁移，<b>Windows</b> 也能运行（借一台 Mac/WSL2 授权一次）。切换 <code>backend</code> 一行配置，11 个 MCP 工具面完全一致。</p>
+</section>
+
+<section class="wrap">
+  <h2>MCP 工具（11 个）</h2>
+  <table>
+    <tr><th>工具</th><th>用途</th></tr>
+    <tr><td><code>muse_chat</code> / <code>muse_send</code></td><td>发消息收回答 / 发后即走；默认走 agent 专属 side chat，不污染主聊天</td></tr>
+    <tr><td><code>muse_start_image_generation</code> + <code>muse_get_image_result</code></td><td>异步画图：任务持久化、超时不丢、重查不重画；返回原生 ImageContent + 永久直链</td></tr>
+    <tr><td><code>muse_get_images</code></td><td>上两步的便捷封装（一步等到底）</td></tr>
+    <tr><td><code>muse_send_image</code></td><td>把本地图发给 Muse 分析（≤2 MiB）</td></tr>
+    <tr><td><code>muse_notifications</code></td><td>被动收 Muse 主动推来的消息/图片（配合 zcode-bridge 技能）</td></tr>
+    <tr><td><code>muse_status</code> / <code>muse_doctor</code> / <code>muse_sessions</code></td><td>连接体检 / 逐项排障清单（每项带下一步命令）/ 会话管理</td></tr>
+  </table>
 </section>
 
 <section class="wrap">
   <h2>快速开始</h2>
-  <p class="lead">两条路线共用前置准备，配对方式与运行位置不同。<b>选一条按步骤走即可</b>；之后随时可切换后端（一行配置）。</p>
+  <p class="lead">配好 SDK token、连上代理后 5 分钟内可达「画图零审批」。</p>
   <div class="tabs">
-    <button class="tab active" data-tab="a">🅰 路线 A · Mac 直连 <small>推荐</small></button>
-    <button class="tab" data-tab="b">🅱 路线 B · Linux 常驻 <small>24/7</small></button>
+    <button class="tab active" data-tab="a">🅰 Mac 直连 <small>推荐</small></button>
+    <button class="tab" data-tab="b">🅱 Linux 常驻 <small>24/7</small></button>
   </div>
 
   <div class="tabpane" id="tab-a">
-    <h3>通用准备</h3>
     <pre><code>git clone https://github.com/ahao430/muse-skill &amp;&amp; cd muse-skill
-uv sync &amp;&amp; uv run pytest            # Python 侧
-cd bridge &amp;&amp; bun install &amp;&amp; cd ..   # Node 侧
+uv sync &amp;&amp; uv run pytest &amp;&amp; (cd bridge &amp;&amp; bun install)
+# SDK token: https://gadgets.muse.ai/settings/sdk-tokens
+echo 'mgst_…' &gt; ~/.config/muse-agent/sdk_token
 
-# SDK Token：https://gadgets.muse.ai/settings/sdk-tokens → Account → SDK tokens
-mkdir -p ~/.config/muse-agent
-echo 'mgst_你的token' &gt; ~/.config/muse-agent/sdk_token &amp;&amp; chmod 600 ~/.config/muse-agent/sdk_token</code></pre>
-    <h3>A1 · 配对（一次性，之后手机彻底退役）</h3>
-    <pre><code>export MUSE_SDK_TOKEN=$(cat ~/.config/muse-agent/sdk_token)
+# 配对（手机 app: Developer mode → Add Device → 选 MuseGadgetXXXXXX）
 bun bridge/bridge.mjs pair
-# 手机 Muse app → Settings → Devices → Developer mode → Add Device (+)
-# → 选 MuseGadgetXXXXXX → 确认 → Wi-Fi 选 Use current connection</code></pre>
-    <h3>A2 · 验证</h3>
-    <pre><code>bun bridge/bridge.mjs status   # "paired": true, "ready": true</code></pre>
-    <div class="card" style="margin-top:10px"><p>✅ 完成。手机不再需要；也可用向导 <code>scripts/setup.sh</code> 自动走完以上步骤。</p></div>
+bun bridge/bridge.mjs status            # ready: true
+
+# 国内网络：config.yaml 加一行，免 TUN 走代理
+echo 'bridge_proxy: http://127.0.0.1:7897' >> ~/.config/muse-agent/config.yaml
+
+# （推荐）COS 图片中转：三行配置后画图零审批，详见 README 路线 A3</code></pre>
   </div>
 
   <div class="tabpane" id="tab-b" hidden>
-    <h3>通用准备</h3>
-    <p class="lead">同路线 A（克隆 + 依赖 + SDK token）。</p>
-    <h3>B1 · 在配对机上配对（一次性；需蓝牙：USB 适配器 / 树莓派 / 笔记本）</h3>
-    <pre><code># WSL2（Windows 侧 usbipd 直通 USB 蓝牙）或 Debian/Ubuntu/树莓派：
-sudo apt install -y bluez python3-dbus python3-gi
-curl -fsSL -o install.sh https://raw.githubusercontent.com/facebookincubator/muse-gadget-sdk/main/linux/install.sh
-sudo bash install.sh --sdk-token mgst_… --yes
-sudo musegadget pair               # 10 分钟窗口，手机 app 操作同路线 A</code></pre>
-    <h3>B2 · 导出凭证（在配对机上）</h3>
-    <pre><code>sudo cp /var/lib/musegadget/{identity,pairing}.json ~/
-scp identity.json pairing.json 你@Mac:~/muse-pairing/   # 配对机使命结束</code></pre>
-    <h3>B3 · 部署常驻主机并导入</h3>
-    <pre><code>scripts/provision.sh --host USER@云主机 --sdk-token $(cat ~/.config/muse-agent/sdk_token)
-scripts/import_state.sh ~/muse-pairing --host USER@云主机</code></pre>
-    <h3>B4 · 切换后端并验证</h3>
-    <pre><code># ~/.config/muse-agent/config.yaml
-backend: ssh
-host: USER@云主机
+    <pre><code># 在有蓝牙的 Linux 上配对一次（USB BLE / 树莓派）：
+sudo bash install.sh --sdk-token mgst_… --yes &amp;&amp; sudo musegadget pair
+scp /var/lib/musegadget/{identity,pairing}.json 你@Mac:~/muse-pairing/
 
-uv run muse-agent --status          # ready: true 即通</code></pre>
+# 部署常驻主机并导入凭证（配对机使命结束）
+scripts/provision.sh --host USER@HOST --sdk-token mgst_…
+scripts/import_state.sh ~/muse-pairing --host USER@HOST
+
+# 每台设备 config.yaml:
+# backend: ssh
+# host: USER@HOST</code></pre>
   </div>
 
-  <h3 style="margin-top:22px">最后：注册 MCP</h3>
-  <pre><code>claude mcp add muse -- uv --directory …/muse-skill run muse-agent
-# 或把 .mcp.json 加进 Zcode 配置；然后对 agent 说：「问一下 Muse ……」</code></pre>
-</section>
-<style>
-  .tabs { display: flex; gap: 10px; margin: 16px 0 18px; flex-wrap: wrap; }
-  .tab { background: var(--panel); color: var(--muted); border: 1px solid var(--border);
-         border-radius: 10px; padding: 10px 18px; font-size: .95rem; cursor: pointer; font-weight: 600; }
-  .tab small { opacity: .7; font-weight: 400; }
-  .tab.active { color: #0d1117; background: var(--accent); border-color: transparent; }
-</style>
-<script>
-  document.querySelectorAll('.tab').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === btn));
-      document.querySelectorAll('.tabpane').forEach(p => p.hidden = (p.id !== 'tab-' + btn.dataset.tab));
-    });
-  });
-</script>
-
-<section class="wrap">
-  <h2>MCP 工具</h2>
-  <table>
-    <tr><th>工具</th><th>用途</th></tr>
-    <tr><td><code>muse_status</code></td><td>连接体检：是否配对、VM 是否就绪（会话首调）</td></tr>
-    <tr><td><code>muse_chat</code></td><td>发消息并等待完整回答（1–600s；超时≠失败，消息已送达）</td></tr>
-    <tr><td><code>muse_send</code></td><td>发后即走，不等回复</td></tr>
-    <tr><td><code>muse_send_image</code></td><td>发图片（≤2 MiB，JPEG/PNG/GIF/WebP）+ 文字，可等待回答</td></tr>
-    <tr><td><code>muse_doctor</code></td><td>逐项体检清单，每项缺失给出确切下一步命令</td></tr>
-    <tr><td><code>muse_sessions</code></td><td>创建/列出 agent 专属 side chat</td></tr>
-    <tr><td><code>muse_wait</code></td><td>协议限制不支持独立等待，明确报错指路 muse_chat</td></tr>
-  </table>
+  <pre><code># 注册 MCP（Claude Code）：
+claude mcp add muse -- uv --directory …/muse-skill run muse-agent
+# 然后对 agent 说：「让 Muse 画一张 ……」</code></pre>
 </section>
 
 <section class="wrap">
   <h2>设计要点</h2>
   <div class="cols">
-    <div class="card"><h3>Agent 专属会话</h3><p>主聊天的程序化回复无法证明归属会被协议丢弃——agent 自动使用持久 side chat（UUID），永不串线、不污染你的主聊天。</p></div>
-    <div class="card"><h3>诚实的失败</h3><p>超时返回「已送达但未答完」而非错误；不支持的等待能力明确报错指路，不假装可用；未配对/断网都有带命令的引导。</p></div>
-    <div class="card"><h3>凭证最小化</h3><p>SDK token 与配对凭证只存在本机，.gitignore 兜底；setup.sh 里粘贴 token 不回显、不进终端历史。</p></div>
-    <div class="card"><h3>23 项单测 + CI</h3><p>SSH/local 双后端全部 mock 化测试，无网络依赖；GitHub Actions 跑 pytest 与脚本语法检查。</p></div>
+    <div class="card"><h3>诚实的异步</h3><p>画图拆成 start/result 两步：超时是状态不是错误，任务持久化、重查不重画；审批等待独立成 <code>approval_required</code> 并附指引。</p></div>
+    <div class="card"><h3>零凭证中转</h3><p>COS 密钥只在 Mac；Muse 只收到 1 小时一次性预签名 PUT。签名算法纯 Python 自实现，配对/自测命令权威验收。</p></div>
+    <div class="card"><h3>国内网络现实</h3><p>代理节点劣化、bun 代理 WS 缺陷、TLS 重置——proxychains4 免 TUN 方案固化，网络类失败可重试不判死。</p></div>
+    <div class="card"><h3>39 项单测 + CI</h3><p>状态机/去重/超尺寸/不内联/预签名接线全 mock 化；GitHub Actions 跑 pytest 与脚本检查。</p></div>
   </div>
 </section>
 
 <section class="wrap">
-  <h2>能力展示 · 吉祥物由 Muse 亲手绘制</h2>
-  <p class="lead">下面两张图不是人画的——通过本项目的 <code>muse_chat</code> 让 Muse 调用它的
-  <code>generate_image</code> 生成，再捕获 raw 事件里的公网链接取回。
-  这正是 <code>muse_get_images</code> 工具的完整链路实测。</p>
+  <h2>能力展示 · 全部由 Muse 绘制、经本工具链取回</h2>
+  <p class="lead">四张图两种通道：前两张走官方 muse.ai/files（每张一次人工审批），后两张走 COS 预签名中转（零审批、15 秒落地、直链永久）——对比即选型。</p>
   <div class="gallery">
-    <figure>
-      <img src="assets/mascot-1.webp" alt="Muse 吉祥物 1：毛绒宇航员抱光球" loading="lazy">
-      <figcaption>① 毛绒宇航员 · 手握全息光球<br><small>1600×1600 · image/webp · 408 KB</small></figcaption>
-    </figure>
-    <figure>
-      <img src="assets/mascot-2.webp" alt="Muse 吉祥物 2：蓝紫小机器人" loading="lazy">
-      <figcaption>② 蓝紫小机器人 · 张开双臂<br><small>1600×1600 · image/webp · 217 KB</small></figcaption>
-    </figure>
+    <figure><img src="assets/mascot-1.webp" alt="吉祥物1" loading="lazy"><figcaption>吉祥物 · muse.ai 通道</figcaption></figure>
+    <figure><img src="assets/mascot-2.webp" alt="吉祥物2" loading="lazy"><figcaption>吉祥物 · muse.ai 通道</figcaption></figure>
+    <figure><img src="assets/kitten.webp" alt="小奶猫" loading="lazy"><figcaption>小奶猫 · COS 零审批 ⭐</figcaption></figure>
+    <figure><img src="assets/garfield.webp" alt="加菲猫泡温泉" loading="lazy"><figcaption>加菲猫泡温泉 · COS 零审批 ⭐</figcaption></figure>
   </div>
 </section>
 
@@ -242,6 +201,15 @@ uv run muse-agent --status          # ready: true 即通</code></pre>
   <a href="https://github.com/wong2/muse-client">muse-client</a> ·
   <a href="https://github.com/ahao430/muse-skill">GitHub</a>
 </footer>
+
+<script>
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === btn));
+      document.querySelectorAll('.tabpane').forEach(p => p.hidden = (p.id !== 'tab-' + btn.dataset.tab));
+    });
+  });
+</script>
 
 </body>
 </html>

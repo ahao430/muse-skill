@@ -2,8 +2,9 @@
 
 把 [Muse](https://muse.ai) 接入 coding agents（Claude Code / Zcode 等）：
 通过 **MCP** + **Agent Skills**，让 agent 能向 Muse 发消息、收回答、发图片，
-做跨 agent 协作。全链路本地，无公网服务器。**已端到端验证**（文字、新会话、
-图片收发均实测通过）。
+做跨 agent 协作。全链路本地，无公网服务器。**已端到端验证**：文字/新会话/
+图片收发、异步画图（原生 MCP ImageContent 内联）、COS 中转（画图→Muse
+curl 上传→直链，零审批弹窗）。
 
 ## 一、方案路线（两条，二选一或都配）
 
@@ -155,7 +156,28 @@ bun bridge/bridge.mjs pair
 bun bridge/bridge.mjs status          # 应返回 "paired": true, "ready": true
 ```
 
-**A3. 注册 MCP + 安装 Skill**（见下方[通用收尾](#3-注册-mcp--安装-skill两条路线相同)）
+**A3.（推荐）配置 COS 图片中转——画图零审批弹窗**
+
+Muse 官方 `muse.ai/files` 转存是**逐文件人工审批**；换成你自己的 COS bucket
+（Mac 预签名、Muse 零凭证 curl 上传）后一次都不弹：
+
+1. 腾讯云 COS 建 bucket（**单AZ + 标准存储 + 公有读私有写**，加密不开或只选
+   SSE-COS；多AZ/低频/归档/KMS 都不要）
+2. CAM 建子账号，只授该 bucket **数据读写**，新建 API 密钥
+3. 写入 `~/.config/muse-agent/config.yaml`（三个字段，缺一回落 muse.ai 老路）：
+
+   ```yaml
+   cos_bucket_domain: muse-xxx.cos.ap-guangzhou.myqcloud.com
+   cos_secret_id: AKID…
+   cos_secret_key: …      # 36 位纯字母数字，注意别粘连换行
+   ```
+
+4. 自测（PUT 200 才算配好）：`uv run python -c "from muse_agent.config import load_config as l; from muse_agent.cosign import presign_url as p; import urllib.request as u; c=l(); r=u.Request(p('PUT',c.cos_bucket_domain,'muse-media/selftest.txt',c.cos_secret_id,c.cos_secret_key,600),data=b'ok',method='PUT'); print('PUT',u.urlopen(r,timeout=20).status)"`
+
+5. 给 Muse 装 [muse-side/zcode-bridge](muse-side/README.md) 技能（zip 发进
+   聊天即可）——不装的话 Muse 会无视预签名地址、退回官方转存
+
+**A4. 注册 MCP + 安装 Skill**（见下方[通用收尾](#3-注册-mcp--安装-skill两条路线相同)）
 
 ---
 
@@ -262,9 +284,12 @@ cp -r skills/muse ~/.claude/skills/muse      # Claude Code
   ImageContent**（客户端内联显示）+ 本地落盘路径（`~/.config/muse-agent/images/<task_id>/`）。
   超时 ≠ 失败：任务持久化，稍后再次轮询即可，**不会重新生成**。审批等待时
   状态为 `approval_required`，去 Muse app 批准后继续。仅 local 后端支持
-- **外联审批**：让 Muse 跑外联任务（画图转存/上传/npm）时，Muse app 可能弹出
-  审批卡片，不批准任务会一直 pending——在 app 里选"永久允许"即可（同域
-  不再弹）；想全自动见 [docs/auto-approve.md](docs/auto-approve.md)
+- **外联审批**：让 Muse 跑外联任务时，Muse app 可能弹审批卡。普通域名卡选
+  "永久允许"一次即好；画图转存走 **COS 中转则完全不弹**（配置见路线 A3）；
+  官方 muse.ai/files 路线是逐文件审批、每张图一卡。详见
+  [docs/auto-approve.md](docs/auto-approve.md)
+- **给用户展示图片永远用 Markdown 语法** `![描述](直链)`，裸链接在会话里
+  不渲染；优先用不过期的 COS 直链
 
 ### 直接用 CLI（调试 / 脚本）
 
@@ -287,13 +312,15 @@ backend: local          # local（默认，Mac 直连）| ssh（云主机常驻�
 host: root@example.com  # backend: ssh 时的 gadget 主机
 timeout: 120            # muse_chat 默认等待秒数（上限 600）
 bridge_command: bun     # bridge/bridge.mjs 的运行器（node ≥22.18 也可）
+bridge_proxy: http://127.0.0.1:7897  # 国内网络必配：免 TUN 走代理
+#                          # （proxychains4+bun，brew install proxychains-ng）
 # credentials_dir: …    # muse-client 凭证目录覆盖（默认 ~/Library/Application Support/MuseGadgetPair）
 
-# COS 图片中转（可选，推荐）：Mac 持密钥预签名，Muse 零凭证 curl 上传，
-# 绕开 muse.ai/files 的逐文件上传审批（myqcloud 域一次 allow_always 即永久）
+# COS 图片中转（推荐）：Mac 持密钥预签名，Muse 零凭证 curl 上传，
+# 画图零审批弹窗、直链永久有效（配置步骤见路线 A3）
 # cos_bucket_domain: muse-xxx.cos.ap-guangzhou.myqcloud.com
 # cos_secret_id: AKID…      # 子账号（仅该 bucket 数据读写）
-# cos_secret_key: …         # 只放本文件（.gitignore 已排除），永不进 Muse/git
+# cos_secret_key: …         # 36 位纯字母数字；只放本文件（.gitignore 已排除）
 ```
 
 ## 五、排错
@@ -301,11 +328,14 @@ bridge_command: bun     # bridge/bridge.mjs 的运行器（node ≥22.18 也可�
 | 症状 | 处理 |
 |---|---|
 | 配对卡在 Wi-Fi 之后 | 手机访问 `hatch-api.meta.ai` 不通，检查手机代理 |
+| `certificate verification error` / WebSocket 连不上 | `hatch.metaaivm.com` 被断网/代理节点劣化——先 `curl -x 代理 http://127.0.0.1:PORT https://www.google.com` 验证节点，再在 config 配 `bridge_proxy: http://127.0.0.1:7897`（自动走 proxychains4 免 TUN，需 `brew install proxychains-ng`） |
+| COS 上传 `403 SignatureDoesNotMatch` | `cos_secret_key` 不配对/被污染：自查应为 **36 位纯字母数字**（注意 config 追加内容别粘连到上一行），然后跑 A3 的自测命令，PUT 200 才算好 |
+| Muse 无视预签名地址、仍走 muse.ai 转存 | 没装或没更新 [muse-side/zcode-bridge](muse-side/README.md) 技能——把 zip 发给 Muse 装上 |
 | `chat` 超时但 app 里能看到回复 | 消息发到了主聊天（回复无法归属被丢弃）——用 agent 默认 side chat 或显式 `--session <uuid>` |
 | `HTTP 400` on side chat | Muse 只接受 **UUID 格式**的 session id，用 `muse_sessions` 生成 |
 | 换了 SDK token 后连不上 | 凭证与签发时的 token 绑定：先 unpair 再重新 pair |
 | ssh 后端不可达 | `scripts/provision.sh` 部署；`musegadget info` / `doctor` 排查 |
-| 让 Muse 跑任务卡住无响应 | 看 Muse app 是否有**外联审批**卡片待批准——批准一次（永久允许）同域不再弹；想全自动见 [docs/auto-approve.md](docs/auto-approve.md) |
+| 让 Muse 跑任务卡住无响应 | 看 Muse app 是否有**外联审批**卡片待批准；画图场景配 COS 中转可根除 |
 
 安全：token 与凭证只在配对机上，永不入库；local 后端不给 Muse 任何本机
 命令权限；ssh 后端下 Muse 获得安装账号的 `system.run`/`file.*` 能力，且
@@ -322,11 +352,15 @@ bun bridge/bridge.mjs --help
 
 ```
 src/muse_agent/
-  server.py        MCP stdio server（7 个工具）
-  adapter.py       统一 API + side chat 管理（默认会话自动创建）
-  backend_local.py local 后端：调 bridge/bridge.mjs
+  server.py        MCP stdio server（11 个工具）
+  adapter.py       统一 API + side chat/图片任务管理
+  backend_local.py local 后端：bridge.mjs + 代理路由（proxychains/node 双方案）
   backend_ssh.py   ssh 后端：调远端 musegadget CLI
+  tasks.py         图片任务注册表（持久化状态机）
+  cosign.py        COS 预签名（纯 Python，无 SDK）
   ssh.py / config.py
-bridge/bridge.mjs  muse-client 的 JSON CLI（pair/status/send/chat/image）
-scripts/           provision.sh（云主机部署）/ import_state.sh（凭证导入）
+bridge/bridge.mjs  muse-client 的 JSON CLI（pair/status/send/chat/image/notifications）
+bridge/node-proxy.mjs  node+global-agent 代理运行器（proxychains 不可用时兜底）
+muse-side/         发给 Muse 安装的 zcode-bridge 技能（zip）
+scripts/           provision.sh / import_state.sh / setup.sh
 ```
