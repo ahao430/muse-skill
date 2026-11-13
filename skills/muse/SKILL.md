@@ -46,6 +46,10 @@ Send messages to Muse and receive answers (text and images), through the
     again — the task is kept, nothing re-generates.
   - status `timeout`: Muse is still working; poll again later. Never
     re-submit the same drawing.
+  - **When showing images to the user, ALWAYS use Markdown image syntax**
+    (`![描述](https://直链)`) — a bare URL does not render in the chat.
+    With a COS media relay configured, prefer the COS direct link from the
+    task's image metadata (permanent, no expiry).
   - If the client cannot render images, give the user the local paths.
 - **Long tasks**: `muse_send` the request, then poll with `muse_chat`
   follow-ups ("status?") in the same `session_id`.
