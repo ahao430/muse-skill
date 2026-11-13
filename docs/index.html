@@ -97,13 +97,25 @@
   <h2>画图，一步到位，零弹窗</h2>
   <div class="arch">你说「让 Muse 画一只加菲猫泡温泉」
   → <b>muse_get_images(prompt)</b>（异步任务，不阻塞）
-  → Muse 生成 → 按装在它身上的 zcode-bridge 技能，<b>curl PUT</b> 上传到你的 COS bucket
+  → Muse 生成 → 按它身上装好的 <b>zcode-bridge 技能</b>，<b>curl PUT</b> 上传到你的 COS bucket
      （Mac 预签名 URL，<b>Muse 零凭证</b>；<b>首次在 app 批一次</b> myqcloud 域名
      "永久允许"，此后终身免批）
   → 直链回传 → <b>原生 MCP ImageContent</b> 内联显示 + 本地落盘 + 永久直链</div>
   <p class="lead" style="margin-top:14px">对比官方 muse.ai/files 转存（<b>每张图</b>弹一次人工审批，无永久放行选项），
   COS 中转只在<b>首次</b>弹一张域名审批卡——选"永久允许"后零弹窗、直链永久有效；
   未配置 COS 时自动回落官方路线。实测：小奶猫、加菲猫、猫鼠追逐三次端到端，15 秒内落地。</p>
+
+  <h3>前提：给 Muse 装一次 zcode-bridge 技能（不发就回退官方逐文件审批）</h3>
+  <p class="lead">本仓库带两份技能：给<b>你的 agent</b> 装的 <code>skills/muse</code>（工具用法），
+  和给 <b>Muse 自己</b> 装的 <a href="https://github.com/ahao430/muse-skill/tree/main/muse-side/zcode-bridge">muse-side/zcode-bridge</a>。
+  后者是零依赖的纯协议约定，把 <code>muse-side/zcode-bridge.zip</code> 发进与 Muse 的聊天，
+  附这句提示词即可安装：</p>
+  <pre><code>请把附件里的 zcode-bridge 技能安装到你的工作区
+（~/workspace/skills/zcode-bridge/），读完 SKILL.md 后按其协议工作：
+今后凡是要通知 Zcode 的结果/图片/任务状态，都按协议格式发到
+muse-agent 开头的侧聊会话里。</code></pre>
+  <p class="lead">装好之后：Muse 会执行画图指令里的预签名 curl 上传、并以 Markdown 图片语法回链；
+  <code>muse_notifications</code> 也靠它——Muse 主动推送的消息/图片按协议进侧聊，agent 被动收取。</p>
 </section>
 
 <section class="wrap">
@@ -155,7 +167,10 @@ bun bridge/bridge.mjs status            # ready: true
 # 国内网络：config.yaml 加一行，免 TUN 走代理
 echo 'bridge_proxy: http://127.0.0.1:7897' >> ~/.config/muse-agent/config.yaml
 
-# （推荐）COS 图片中转：三行配置，首次批一次后画图零弹窗（README 路线 A3）</code></pre>
+# （推荐）COS 图片中转：三行配置，首次批一次后画图零弹窗（README 路线 A3）
+
+# Muse 侧装桥（一次）：把 muse-side/zcode-bridge.zip 发进 Muse 聊天
+# + 安装提示词（见上方「前提」），否则 Muse 无视预签名地址、回退逐文件审批</code></pre>
   </div>
 
   <div class="tabpane" id="tab-b" hidden>
