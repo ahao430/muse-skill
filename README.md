@@ -74,15 +74,32 @@
 |---|---|---|
 | 文字聊天 / 流式回复 | ✅ | ✅ |
 | 发送图片（≤2 MiB） | ✅ | ✅ |
-| 收 Muse 生成的图片/文件卡片 | ❌ 只回传文本 | ❌ 只回传文本（SDK 层有 raw 事件，可扩展） |
+| 收 Muse 生成的图片 | ✅ `muse_get_images`：生成 → 公网直链 → 下载落盘（实测） | ❌ 官方 CLI 无媒体通道（可给服务器另装 bridge 解决） |
 | Muse 执行本机命令（`system.run`/`file.*`） | ❌ 不注册任何命令 | ✅ 以安装账号权限执行，可经 `commands.d` 裁剪 |
 | 语音通话（WAV/实时） | ❌（muse-client 未实现） | ⚠️ SDK 自带 `voice-call` CLI，未接入 MCP 工具 |
 | 24/7 在线收发 | ❌ Mac 睡眠即断 | ✅ systemd 常驻 |
 | 并发 | 单连接按需建立，**避免并发调用**（token 刷新冲突） | 服务端并发上限 4 命令；同一 chat 单等待 |
 | 断连行为 | 链路直接断，无遗留 | **已开始的命令继续跑完**（官方行为） |
 
-两条路线的 MCP 工具面完全一致（`muse_chat` 等 7 个），切换 `backend`
-不需要改任何调用方式。
+两条路线的 MCP 工具面完全一致（8 个工具），切换 `backend`
+不需要改任何调用方式；仅 `muse_get_images` 目前为 local 后端专属。
+
+### 多设备共享一台服务器
+
+同一份凭证**不能**同时装在两台机器上（token 自动轮转会互相踩踏，同一设备
+身份也会连接竞争）。多设备共用的正确姿势是路线 B：
+
+```
+设备1 (Mac)   ─┐
+设备2 (家里PC) ─┼─ 各自装 skill，config: backend: ssh ──> 服务器（唯一持有凭证，24/7）
+设备3 (公司)   ─┘
+```
+
+服务器跑 `provision.sh` + `import_state.sh` 持有授权；每台设备只需安装本
+仓库并配好 `backend: ssh` + `host:`。你 Mac 上现有的路线 A 凭证就是官方
+格式（`~/Library/Application Support/MuseGadgetPair/`），可直接交给
+`import_state.sh` 导入服务器；导入后 Mac 侧建议停用本地后端，避免双机
+共用同一凭证。
 
 > 配对的本质：gadget 协议的认证锚点。Muse 只接受持有配对凭证（手机 app
 > 经 BLE 扫到设备时签发的 `identity.json`/`pairing.json`）的设备。没有绕过
@@ -231,6 +248,7 @@ cp -r skills/muse ~/.claude/skills/muse      # Claude Code
 | 「问 Muse：帮我分析这个 API 设计……」 | `muse_chat(message)` |
 | 「把这张截图发给 Muse 看看」 | `muse_send_image(path, message)` |
 | 「给 Muse 发个通知，不用等回复」 | `muse_send(message)` |
+| 「让 Muse 画一张 xx 的图发我」 | `muse_get_images(prompt)` → 返回本地落盘的图片路径 |
 | 「开个新会话专门讨论 X」 | `muse_sessions(label="X")` → 拿 `session_id` 后持续追问 |
 
 行为约定（agent 的 SKILL.md 已内置）：
@@ -239,6 +257,8 @@ cp -r skills/muse ~/.claude/skills/muse      # Claude Code
   不污染你在 Muse app 里的主聊天
 - **超时 ≠ 失败**：消息已送达，Muse 可能晚些回；加大 timeout 重试即可
 - 图片限 2 MiB（JPEG/PNG/GIF/WebP）
+- 让 Muse 画图：`muse_get_images` 会请求 Muse 生成 → 它把成品转存为公网直链
+  （muse.ai/files）→ 工具自动下载到本地临时文件并返回路径；仅 local 后端支持
 
 ### 直接用 CLI（调试 / 脚本）
 
@@ -248,6 +268,7 @@ bun bridge/bridge.mjs chat "你好" --timeout 120               # 发并等回�
 bun bridge/bridge.mjs chat "继续" --session <uuid>            # 指定 side chat
 bun bridge/bridge.mjs image pic.png "这是什么？" --timeout 120 # 图片+文字
 bun bridge/bridge.mjs send "通知（不等回复）"                  # fire-and-forget
+bun bridge/bridge.mjs images "画一只太空猫" --session <uuid>    # 生成并收集公网直链
 uv run muse-agent --status                                    # MCP server 自检
 ```
 

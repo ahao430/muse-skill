@@ -17,7 +17,8 @@ Send messages to Muse and receive answers (text and images), through the
 | `muse_chat(message, session_id?, timeout?)` | Ask Muse something and get its answer |
 | `muse_send(message, session_id?)` | Notify Muse without waiting (fire-and-forget) |
 | `muse_send_image(image_path, message?, …)` | Show Muse a picture (≤2 MiB, JPEG/PNG/GIF/WebP) |
-| `muse_doctor()` | When status looks broken: official setup health check |
+| `muse_get_images(prompt?, …)` | Ask Muse to draw and get the images back as local file paths (local backend only) |
+| `muse_doctor()` | When status looks broken: setup checklist with next commands |
 | `muse_sessions(label?)` | Create/list agent side chats |
 
 ## How to use

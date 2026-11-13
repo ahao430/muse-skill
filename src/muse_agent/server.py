@@ -120,6 +120,52 @@ async def muse_doctor() -> dict:
 
 
 @mcp.tool()
+async def muse_get_images(
+    prompt: str | None = None,
+    session_id: str | None = None,
+    timeout: int | None = None,
+) -> dict:
+    """Ask Muse to generate images and get them back as downloadable files.
+
+    prompt describes what to draw (default: re-share its latest generated
+    media as public links). Muse renders via its generate_image tool; this
+    tool waits for the reply, extracts the public muse.ai/files URLs from
+    the presentation events, downloads each to a local temp file, and
+    returns the file paths. Local backend only.
+    """
+    import tempfile
+    import urllib.request
+
+    try:
+        payload = await _call(_adapter.get_images, prompt, session_id, timeout)
+    except (MuseUnavailable, NotPaired) as exc:
+        return {"ok": False, "error": _adapter_error_text(exc)}
+    if not payload.get("ok"):
+        return {"ok": False, "error": payload.get("error", "image collection failed")}
+    saved = []
+    for img in payload.get("images", []):
+        url = img.get("url")
+        if not url:
+            continue
+        try:
+            def _download(u=url):
+                import urllib.request as ur
+                req = ur.Request(u, headers={"User-Agent": "muse-agent/0.1"})
+                with ur.urlopen(req, timeout=60) as resp, tempfile.NamedTemporaryFile(
+                        suffix=".webp", delete=False) as f:
+                    f.write(resp.read())
+                    return f.name
+            path = await _call(_download)
+            saved.append({"path": path, "label": img.get("label", ""),
+                          "url": url, "width": img.get("width"), "height": img.get("height")})
+        except Exception as exc:  # noqa: BLE001 — one bad URL must not kill the batch
+            saved.append({"url": url, "error": str(exc)})
+    return {"ok": True, "reply": payload.get("reply", ""),
+            "note": "sandbox 里的原图链接外部不可达；这里返回的是 Muse 转存的公网直链与本地落盘路径",
+            "images": saved}
+
+
+@mcp.tool()
 async def muse_wait(session_id: str, timeout: int | None = None) -> dict:
     """Not supported by the remote Muse CLI, which couples send+wait.
 

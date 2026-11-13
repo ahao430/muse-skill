@@ -91,6 +91,69 @@ async function chatTurn(client, message, chatOpts) {
   return text;
 }
 
+/** Send a message and collect the reply plus any public image URLs from
+ * Muse's generated-media presentations. Muse hosts finished media on
+ * muse.ai/files/… (sandbox paths are unreachable externally). */
+async function chatCollect(message, chatOpts) {
+  let client = arguments.length >= 3 ? arguments[2] : await connect(chatOpts.rootOpts ?? {});
+  let reply = '';
+  const images = [];
+  const addImage = (img) => {
+    if (img && img.url && !images.some(i => i.url === img.url)) images.push(img);
+  };
+  if (!chatOpts.first) {
+    const { MuseTurn } = await import('muse-client');
+    const signal = AbortSignal.timeout(chatOpts.timeoutMs ?? 240000);
+    const sub = await client.subscribe({ sessionId: chatOpts.sessionId, signal });
+    try {
+      const turn = new MuseTurn({ sessionId: chatOpts.sessionId, ownsChat: true });
+      const ack = await client.sendMessage(message, { sessionId: chatOpts.sessionId, images: chatOpts.images, signal });
+      for (const ev of turn.acknowledge(ack)) collectFromEvent(ev, addImage, t => reply = t);
+      for await (const ev of sub) {
+        collectFromEvent(ev, addImage, t => reply = t);
+        turn.feed(ev);
+        if (turn.complete()) break;
+      }
+    } catch (e) {
+      if (!/timeout|abort|TimeoutError/i.test(String(e?.name) + String(e?.message))) throw e;
+    } finally { sub.close(); }
+    return { reply, images };
+  }
+  // first:true — message creates the chat; subscribe only after send
+  const signal = AbortSignal.timeout(chatOpts.timeoutMs ?? 240000);
+  const ack = await client.sendMessage(message, { sessionId: chatOpts.sessionId, images: chatOpts.images, signal });
+  const sub = await client.subscribe({ sessionId: chatOpts.sessionId, signal });
+  try {
+    const { MuseTurn } = await import('muse-client');
+    const turn = new MuseTurn({ sessionId: chatOpts.sessionId, ownsChat: true });
+    for (const ev of turn.acknowledge(ack)) collectFromEvent(ev, addImage, t => reply = t);
+    for await (const ev of sub) {
+      collectFromEvent(ev, addImage, t => reply = t);
+      turn.feed(ev);
+      if (turn.complete()) break;
+    }
+  } catch (e) {
+    if (!/timeout|abort|TimeoutError/i.test(String(e?.name) + String(e?.message))) throw e;
+  } finally { sub.close(); }
+  return { reply, images };
+}
+
+function collectFromEvent(ev, addImage, setText) {
+  if (ev?.type === 'reply') setText(ev.text);
+  const payload = ev?.raw?.payload ?? ev?.payload;
+  const pres = payload?.presentations ?? (payload?.data ? [payload.data] : []);
+  for (const p of pres) {
+    for (const img of p?.images ?? []) {
+      const url = img?.variants?.original ?? img?.variants?.large ?? null;
+      // Only public muse.ai links are fetchable; sandbox URLs are not.
+      if (url && /https:\/\/(muse\.ai|www\.muse\.ai)\//.test(url) && img.missing !== true) {
+        addImage({ url, label: img.label ?? '', mime: img.mime ?? 'image/webp',
+                   width: img.width, height: img.height, byte_len: img.byte_len });
+      }
+    }
+  }
+}
+
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const { pos, opts } = parseArgs(rest);
@@ -187,6 +250,30 @@ async function main() {
       } finally {
         client.close();
       }
+    } catch (e) { fail(e); }
+    return;
+  }
+
+  if (cmd === 'images') {
+    // Ask Muse to generate (or re-share) media, then collect public
+    // muse.ai/files links from the reply's presentations.
+    const message = pos[0] ?? '把你最近生成的图片上传为公网可访问的 muse.ai/files 链接，只发链接。';
+    const timeoutMs = (opts.timeout ? Number(opts.timeout) : 240) * 1000;
+    try {
+      let client = await connect(opts);
+      try {
+        if (!opts.session) fail('images requires --session <uuid> (use muse_sessions to create one)');
+        let result;
+        try {
+          result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs });
+        } catch (e) {
+          if (!/HTTP (400|404)/.test(String(e?.message))) throw e;
+          client.close();
+          client = await connect(opts);
+          result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs, first: true });
+        }
+        out({ ok: true, reply: result.reply, images: result.images });
+      } finally { client.close(); }
     } catch (e) { fail(e); }
     return;
   }

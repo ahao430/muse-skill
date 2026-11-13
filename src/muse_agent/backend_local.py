@@ -69,6 +69,16 @@ class LocalBackend:
         args = ["chat", message, "--timeout", str(timeout)] + self._session(session_id)
         return self._run(args, timeout=timeout + 60)
 
+    def images(self, prompt: str | None, session_id: str, timeout: int | None) -> dict:
+        """Ask Muse to (re)share generated media as public links, collect them."""
+        args = ["images"]
+        if prompt:
+            args.append(prompt)
+        args += ["--timeout", str(timeout or 240), "--session", session_id]
+        if self.config.credentials_dir:
+            args += ["--directory", self.config.credentials_dir]
+        return self._run(args, timeout=(timeout or 240) + 60)
+
     def send_image(self, image_path: str, message: str, session_id: str | None, timeout: int | None) -> dict:
         args = ["image", image_path]
         if message:

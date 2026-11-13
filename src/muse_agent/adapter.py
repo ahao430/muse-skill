@@ -80,6 +80,20 @@ class GadgetAdapter:
         return _to_send_result(self.backend.send_image(image_path, message,
                                                        self._resolve(session_id), timeout))
 
+    def get_images(self, prompt: str | None = None, session_id: str | None = None,
+                   timeout: int | None = None) -> dict:
+        """Generate-and-fetch: ask Muse to produce media and return public links.
+
+        Local backend only — the ssh backend's musegadget CLI has no media
+        collection channel. Returns {"ok", "reply", "images": [{url, label…}]}.
+        """
+        if self.config.backend != "local":
+            return {"ok": False,
+                    "error": "muse_get_images requires backend: local (the ssh backend has no media channel)"}
+        session = self._resolve(session_id)
+        seconds = min(max(timeout or 240, 30), 600)
+        return self.backend.images(prompt, session, seconds)
+
     def doctor(self) -> dict:
         return self.backend.doctor()
 
