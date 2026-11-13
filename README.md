@@ -85,7 +85,10 @@ bun bridge/bridge.mjs --help   # the Node bridge underneath
 ## Status
 
 - [x] Dual-backend MCP server (local muse-client / remote musegadget) + skill
-      + provisioning scripts (22 unit tests)
-- [x] stdio smoke test: tools respond; unpaired/unreachable return guided errors
-- [ ] One-time BLE pairing on the Mac (`bun bridge/bridge.mjs pair`)
-- [ ] End-to-end `muse_chat` verification after pairing
+      + provisioning scripts (23 unit tests)
+- [x] One-time BLE pairing on the Mac (internal Bluetooth, no extra hardware)
+- [x] End-to-end verified: `muse_chat` text, new-session auto-provisioning,
+      and image send/reply through the MCP stdio tool
+- Known limits: main-chat replies can't be proven bound to programmatic
+  requests — the agent auto-talks in its own persistent side chat (UUID ids
+  only, auto-created on first use).

@@ -69,7 +69,7 @@ class GadgetAdapter:
     def chat(self, message: str, session_id: str | None = None,
              timeout: int | None = None) -> SendResult:
         seconds = min(max(timeout or self.config.timeout, 1), MAX_WAIT)
-        return _to_send_result(self.backend.chat(message, session_id, seconds))
+        return _to_send_result(self.backend.chat(message, self._resolve(session_id), seconds))
 
     def wait(self, session_id: str, timeout: int | None = None) -> SendResult:
         """Not supported: both backends couple send+wait in one call."""
@@ -77,15 +77,32 @@ class GadgetAdapter:
 
     def send_image(self, image_path: str, message: str = "",
                    session_id: str | None = None, timeout: int | None = None) -> SendResult:
-        return _to_send_result(self.backend.send_image(image_path, message, session_id, timeout))
+        return _to_send_result(self.backend.send_image(image_path, message,
+                                                       self._resolve(session_id), timeout))
 
     def doctor(self) -> dict:
         return self.backend.doctor()
 
     # -- sessions -----------------------------------------------------------
 
+    def _resolve(self, session_id: str | None) -> str | None:
+        """Resolve the session to chat in. Main chat replies can't be proven
+        bound to a programmatic request, so the agent always talks in its own
+        persistent side chat (auto-provisioned on first use)."""
+        if session_id:
+            return session_id
+        sessions = cfg.load_sessions()
+        default = sessions.get("_default")
+        if default and isinstance(default, dict) and default.get("session_id"):
+            return default["session_id"]
+        new_id = str(uuid.uuid4())
+        sessions["_default"] = {"label": "agent default", "session_id": new_id}
+        cfg.save_sessions(sessions)
+        return new_id
+
     def new_session(self, label: str = "") -> str:
-        session_id = f"muse-agent-{uuid.uuid4().hex[:12]}"
+        # Muse requires side-chat ids to be UUIDs; anything else 400s.
+        session_id = str(uuid.uuid4())
         sessions = cfg.load_sessions()
         sessions[session_id] = {"label": label}
         cfg.save_sessions(sessions)
@@ -93,4 +110,5 @@ class GadgetAdapter:
 
     def list_sessions(self) -> list[dict]:
         sessions = cfg.load_sessions()
-        return [{"session_id": sid, **meta} for sid, meta in sessions.items()]
+        return [{"session_id": m.get("session_id", sid), "label": m.get("label", ""), **m}
+                for sid, m in sessions.items() if sid != "_default"]

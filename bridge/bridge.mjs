@@ -60,6 +60,37 @@ async function loadImage(pathStr) {
   return { data: await readFile(pathStr), mimeType: mime, filename: path.basename(pathStr) };
 }
 
+/** Follow one turn, collecting reply text. `first` handles a brand-new side
+ * chat: the message creates the chat, then we subscribe and track the turn
+ * (small race if Muse answers before the subscription opens — same known
+ * limitation as the official CLI; surfaced as a timeout + retry hint). */
+async function chatTurn(client, message, chatOpts) {
+  let text = '';
+  const collect = (events) => {
+    for (const ev of events) if (ev.type === 'reply') text = ev.text;
+  };
+  if (!chatOpts.first) {
+    for await (const ev of client.chat(message, chatOpts)) {
+      if (ev.type === 'reply') text = ev.text;
+    }
+    return text;
+  }
+  const { MuseTurn } = await import('muse-client');
+  const ack = await client.sendMessage(message, { sessionId: chatOpts.sessionId, images: chatOpts.images });
+  const sub = await client.subscribe({ sessionId: chatOpts.sessionId });
+  try {
+    const turn = new MuseTurn({ sessionId: chatOpts.sessionId, ownsChat: true });
+    collect(turn.acknowledge(ack));
+    for await (const ev of sub) {
+      collect(turn.feed(ev));
+      if (turn.complete()) break;
+    }
+  } finally {
+    sub.close();
+  }
+  return text;
+}
+
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   const { pos, opts } = parseArgs(rest);
@@ -103,7 +134,7 @@ async function main() {
     if (cmd !== 'image' && message === undefined) fail('missing message');
     const images = cmd === 'image' ? [await loadImage(pos[0])] : undefined;
     try {
-      const client = await connect(opts);
+      let client = await connect(opts);
       try {
         if (cmd === 'send') {
           const ack = await client.sendMessage(message, { sessionId: opts.session, images });
@@ -111,13 +142,41 @@ async function main() {
           return;
         }
         const timeoutMs = (opts.timeout ? Number(opts.timeout) : 120) * 1000;
-        const chatOpts = { timeoutMs, images };
-        if (opts.session) { chatOpts.sessionId = opts.session; chatOpts.ownsChat = true; }
+        const images2 = images; // captured above
         let text = '';
         let timedOut = false;
         try {
-          for await (const ev of client.chat(message, chatOpts)) {
-            if (ev.type === 'reply') text = ev.text;
+          if (opts.session) {
+            // New side chats must be created by their first message; the
+            // subscribe-first path 400s on them. Fall back on a FRESH
+            // connection (a failed subscribe leaves the shared one unusable):
+            // send first to create the chat, then subscribe and track.
+            try {
+              text = await chatTurn(client, message, { sessionId: opts.session, ownsChat: true, timeoutMs, images: images2 });
+            } catch (e) {
+              const msg = String(e?.message);
+              if (/HTTP 400/.test(msg)) {
+                // Muse only accepts UUID-shaped side chat ids; a 400 on send
+                // usually means the id is malformed, not merely "chat unknown".
+                if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(opts.session)) {
+                  throw new Error(
+                    `side chat id '${opts.session}' was rejected (HTTP 400). ` +
+                    'Muse requires UUID-format session ids — create one via muse_sessions.'
+                  );
+                }
+              }
+              if (!/HTTP (400|404)/.test(msg)) throw e;
+              // 404: the side chat does not exist yet. A failed subscribe also
+              // leaves the shared connection unusable — retry on a FRESH one,
+              // send first to create the chat, then subscribe and track.
+              client.close();
+              client = await connect(opts);
+              text = await chatTurn(client, message, { sessionId: opts.session, ownsChat: true, timeoutMs, images: images2, first: true });
+            }
+          } else {
+            for await (const ev of client.chat(message, { timeoutMs, images: images2 })) {
+              if (ev.type === 'reply') text = ev.text;
+            }
           }
         } catch (e) {
           if (/timeout|deadline/i.test(String(e?.message))) timedOut = true; else throw e;
