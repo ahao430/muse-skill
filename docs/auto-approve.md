@@ -18,8 +18,14 @@ Muse 的 Agent VM 执行需要访问外网的任务（`npm install`、`curl`、�
 3. 选择**永久允许**（allow_always，按目标域名落库）
 4. 任务自动继续；同域名以后不再弹单
 
-需要批准的常见域名（按需）：`muse.ai`、`registry.npmjs.org`、你让它访问
-的任何站点。适合个人使用——弹几次就全放行完了。
+需要批准的常见域名（按需）：`muse.ai`、`registry.npmjs.org`、你的 COS
+bucket 域名（`*.cos.*.myqcloud.com`——配置了 COS 图片中转后，**首次上传**
+会弹这一张，选"永久允许"后画图终身零弹窗）、你让它访问的任何站点。
+适合个人使用——弹几次就全放行完了。
+
+> 两类审批别混淆：**muse.ai/files 官方转存**是逐文件审批（每张图一卡，
+> 没有"永久允许"选项）；**COS 中转**是域名级审批（一生一次，allow_always）。
+> 这正是推荐 COS 中转的原因。
 
 ## 方式 B：全自动批准器 muse-auto-approve
 

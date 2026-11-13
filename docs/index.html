@@ -80,7 +80,8 @@
   <div class="badges">
     <span class="badge"><b>✓ 全链路实测</b> 文字 / 画图 / COS 直链 / 通知</span>
     <span class="badge">MCP + Agent Skills · 11 工具</span>
-    <span class="badge">画图零审批弹窗</span>
+    <span class="badge"><b>画图零弹窗</b>首次一次授权</span>
+    <span class="badge">附 COS 直链上传技能</span>
     <span class="badge">一次配对 · 手机即退役</span>
     <span class="badge">多设备共享</span>
     <span class="badge">Mac / Linux / Windows</span>
@@ -93,14 +94,16 @@
 </header>
 
 <section class="wrap">
-  <h2>画图，一步到位，零审批</h2>
+  <h2>画图，一步到位，零弹窗</h2>
   <div class="arch">你说「让 Muse 画一只加菲猫泡温泉」
   → <b>muse_get_images(prompt)</b>（异步任务，不阻塞）
   → Muse 生成 → 按装在它身上的 zcode-bridge 技能，<b>curl PUT</b> 上传到你的 COS bucket
-     （Mac 预签名 URL，<b>Muse 零凭证</b>；myqcloud 域 allow_always 一次覆盖）
+     （Mac 预签名 URL，<b>Muse 零凭证</b>；<b>首次在 app 批一次</b> myqcloud 域名
+     "永久允许"，此后终身免批）
   → 直链回传 → <b>原生 MCP ImageContent</b> 内联显示 + 本地落盘 + 永久直链</div>
-  <p class="lead" style="margin-top:14px">对比官方 muse.ai/files 转存（每张图弹一次人工审批），COS 中转全程零弹窗、
-  直链永久有效；未配置 COS 时自动回落官方路线。实测：小奶猫、加菲猫两次端到端，15 秒内落地。</p>
+  <p class="lead" style="margin-top:14px">对比官方 muse.ai/files 转存（<b>每张图</b>弹一次人工审批，无永久放行选项），
+  COS 中转只在<b>首次</b>弹一张域名审批卡——选"永久允许"后零弹窗、直链永久有效；
+  未配置 COS 时自动回落官方路线。实测：小奶猫、加菲猫、猫鼠追逐三次端到端，15 秒内落地。</p>
 </section>
 
 <section class="wrap">
@@ -152,7 +155,7 @@ bun bridge/bridge.mjs status            # ready: true
 # 国内网络：config.yaml 加一行，免 TUN 走代理
 echo 'bridge_proxy: http://127.0.0.1:7897' >> ~/.config/muse-agent/config.yaml
 
-# （推荐）COS 图片中转：三行配置后画图零审批，详见 README 路线 A3</code></pre>
+# （推荐）COS 图片中转：三行配置，首次批一次后画图零弹窗（README 路线 A3）</code></pre>
   </div>
 
   <div class="tabpane" id="tab-b" hidden>
@@ -171,7 +174,11 @@ scripts/import_state.sh ~/muse-pairing --host USER@HOST
 
   <pre><code># 注册 MCP（Claude Code）：
 claude mcp add muse -- uv --directory …/muse-skill run muse-agent
-# 然后对 agent 说：「让 Muse 画一张 ……」</code></pre>
+# 然后对 agent 说：「让 Muse 画一张 ……」
+
+# 附：独立 COS 上传技能（skills/cos，纯 stdlib，复用同一份 cos_* 配置）
+cp -r skills/cos ~/.agents/skills/cos
+python3 ~/.agents/skills/cos/cos.py upload 文件.png --md   # → ![名字](永久直链)</code></pre>
 </section>
 
 <section class="wrap">
@@ -186,7 +193,7 @@ claude mcp add muse -- uv --directory …/muse-skill run muse-agent
 
 <section class="wrap">
   <h2>能力展示 · 全部由 Muse 绘制、经本工具链取回</h2>
-  <p class="lead">四张图两种通道：前两张走官方 muse.ai/files（每张一次人工审批），后两张走 COS 预签名中转（零审批、15 秒落地、直链永久）——对比即选型。</p>
+  <p class="lead">四张图两种通道：前两张走官方 muse.ai/files（每张一次人工审批），后两张走 COS 预签名中转（首次一次授权后零弹窗、15 秒落地、直链永久）——对比即选型。</p>
   <div class="gallery">
     <figure><img src="assets/mascot-1.webp" alt="吉祥物1" loading="lazy"><figcaption>吉祥物 · muse.ai 通道</figcaption></figure>
     <figure><img src="assets/mascot-2.webp" alt="吉祥物2" loading="lazy"><figcaption>吉祥物 · muse.ai 通道</figcaption></figure>

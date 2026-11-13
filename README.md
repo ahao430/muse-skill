@@ -158,8 +158,9 @@ bun bridge/bridge.mjs status          # 应返回 "paired": true, "ready": true
 
 **A3.（推荐）配置 COS 图片中转——画图零审批弹窗**
 
-Muse 官方 `muse.ai/files` 转存是**逐文件人工审批**；换成你自己的 COS bucket
-（Mac 预签名、Muse 零凭证 curl 上传）后一次都不弹：
+Muse 官方 `muse.ai/files` 转存是**逐文件人工审批**（每张图弹一卡）；换成你
+自己的 COS bucket（Mac 预签名、Muse 零凭证 curl 上传）后，**首次上传弹一次
+域名审批卡，在 app 里选"永久允许"，此后终身零弹窗**：
 
 1. 腾讯云 COS 建 bucket（**单AZ + 标准存储 + 公有读私有写**，加密不开或只选
    SSE-COS；多AZ/低频/归档/KMS 都不要）
@@ -176,6 +177,9 @@ Muse 官方 `muse.ai/files` 转存是**逐文件人工审批**；换成你自己
 
 5. 给 Muse 装 [muse-side/zcode-bridge](muse-side/README.md) 技能（zip 发进
    聊天即可）——不装的话 Muse 会无视预签名地址、退回官方转存
+6. **首次让 Muse 上传时会弹一张审批卡**（`curl` 访问 myqcloud.com 的域名级
+   审批）：在 Muse app 选**永久允许**即可。这是 COS 路线一生一次的手动审批，
+   之后画图全程零弹窗——对比官方 muse.ai/files 路线每张图一卡
 
 **A4. 注册 MCP + 安装 Skill**（见下方[通用收尾](#3-注册-mcp--安装-skill两条路线相同)）
 
@@ -288,9 +292,9 @@ cp -r skills/cos  ~/.agents/skills/cos       # 纯 stdlib，系统 python3 即�
   超时 ≠ 失败：任务持久化，稍后再次轮询即可，**不会重新生成**。审批等待时
   状态为 `approval_required`，去 Muse app 批准后继续。仅 local 后端支持
 - **外联审批**：让 Muse 跑外联任务时，Muse app 可能弹审批卡。普通域名卡选
-  "永久允许"一次即好；画图转存走 **COS 中转则完全不弹**（配置见路线 A3）；
-  官方 muse.ai/files 路线是逐文件审批、每张图一卡。详见
-  [docs/auto-approve.md](docs/auto-approve.md)
+  "永久允许"一次即好；画图转存走 **COS 中转：首次弹一次 myqcloud 域名卡，
+  "永久允许"后零弹窗**（配置见路线 A3）；官方 muse.ai/files 路线是逐文件
+  审批、每张图一卡。详见 [docs/auto-approve.md](docs/auto-approve.md)
 - **给用户展示图片永远用 Markdown 语法** `![描述](直链)`，裸链接在会话里
   不渲染；优先用不过期的 COS 直链
 
@@ -334,6 +338,7 @@ bridge_proxy: http://127.0.0.1:7897  # 国内网络必配：免 TUN 走代理
 | `certificate verification error` / WebSocket 连不上 | `hatch.metaaivm.com` 被断网/代理节点劣化——先 `curl -x 代理 http://127.0.0.1:PORT https://www.google.com` 验证节点，再在 config 配 `bridge_proxy: http://127.0.0.1:7897`（自动走 proxychains4 免 TUN，需 `brew install proxychains-ng`） |
 | COS 上传 `403 SignatureDoesNotMatch` | `cos_secret_key` 不配对/被污染：自查应为 **36 位纯字母数字**（注意 config 追加内容别粘连到上一行），然后跑 A3 的自测命令，PUT 200 才算好 |
 | Muse 无视预签名地址、仍走 muse.ai 转存 | 没装或没更新 [muse-side/zcode-bridge](muse-side/README.md) 技能——把 zip 发给 Muse 装上 |
+| 首次 COS 上传弹了一张 myqcloud.com 审批卡 | **正常且仅此一次**：域名级 `tool.exec` 审批，在 app 选**永久允许**后终身不再弹（官方 muse.ai/files 路线才是每张图一卡，见 [docs/auto-approve.md](docs/auto-approve.md)） |
 | `chat` 超时但 app 里能看到回复 | 消息发到了主聊天（回复无法归属被丢弃）——用 agent 默认 side chat 或显式 `--session <uuid>` |
 | 同一会话反复超时、新会话秒回 | **会话积压**（高频自动化测试后常见）：该会话消息队列被塞满，旧会话慢慢消化，新会话立即响应——`muse_sessions` 开新会话重发即可（agent 的 SKILL.md 已内置此轮换规则） |
 | Muse 拒画某题材（回复"这张没能画出来"） | Muse 自带内容审核，暴力类描述（如"打架"）会被拒，且它通常主动给出温和替代方案——接受替代或换个描述，别原样重发 |
