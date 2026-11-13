@@ -74,7 +74,7 @@
 |---|---|---|
 | 文字聊天 / 流式回复 | ✅ | ✅ |
 | 发送图片（≤2 MiB） | ✅ | ✅ |
-| 收 Muse 生成的图片 | ✅ `muse_get_images`：生成 → 公网直链 → 下载落盘（实测） | ❌ 官方 CLI 无媒体通道（可给服务器另装 bridge 解决） |
+| 收 Muse 生成的图片 | ✅ 原生 ImageContent 内联显示 + 本地落盘（实测） | ❌ 官方 CLI 无媒体通道（可给服务器另装 bridge 解决） |
 | Muse 执行本机命令（`system.run`/`file.*`） | ❌ 不注册任何命令 | ✅ 以安装账号权限执行，可经 `commands.d` 裁剪 |
 | 语音通话（WAV/实时） | ❌（muse-client 未实现） | ⚠️ SDK 自带 `voice-call` CLI，未接入 MCP 工具 |
 | 24/7 在线收发 | ❌ Mac 睡眠即断 | ✅ systemd 常驻 |
@@ -248,7 +248,7 @@ cp -r skills/muse ~/.claude/skills/muse      # Claude Code
 | 「问 Muse：帮我分析这个 API 设计……」 | `muse_chat(message)` |
 | 「把这张截图发给 Muse 看看」 | `muse_send_image(path, message)` |
 | 「给 Muse 发个通知，不用等回复」 | `muse_send(message)` |
-| 「让 Muse 画一张 xx 的图发我」 | `muse_get_images(prompt)` → 返回本地落盘的图片路径 |
+| 「让 Muse 画一张 xx 的图」 | `muse_start_image_generation(prompt)` → 拿 task_id → `muse_get_image_result(task_id)` 返回**原生 MCP 图片**（对话内直接显示）+ 本地路径；或一步到位 `muse_get_images(prompt)` |
 | 「开个新会话专门讨论 X」 | `muse_sessions(label="X")` → 拿 `session_id` 后持续追问 |
 
 行为约定（agent 的 SKILL.md 已内置）：
@@ -257,9 +257,11 @@ cp -r skills/muse ~/.claude/skills/muse      # Claude Code
   不污染你在 Muse app 里的主聊天
 - **超时 ≠ 失败**：消息已送达，Muse 可能晚些回；加大 timeout 重试即可
 - 图片限 2 MiB（JPEG/PNG/GIF/WebP）
-- 让 Muse 画图：`muse_get_images` 会请求 Muse 生成 → 它把成品转存为公网直链
-  （muse.ai/files）→ 工具自动下载到本地临时文件并返回路径；仅 local 后端支持
-- **外联审批**：让 Muse 跑外联任务（画图/上传/npm）时，Muse app 可能弹出
+- 让 Muse 画图：画图是异步任务。`muse_get_image_result` 返回**原生 MCP
+  ImageContent**（客户端内联显示）+ 本地落盘路径（`~/.config/muse-agent/images/<task_id>/`）。
+  超时 ≠ 失败：任务持久化，稍后再次轮询即可，**不会重新生成**。审批等待时
+  状态为 `approval_required`，去 Muse app 批准后继续。仅 local 后端支持
+- **外联审批**：让 Muse 跑外联任务（画图转存/上传/npm）时，Muse app 可能弹出
   审批卡片，不批准任务会一直 pending——在 app 里选"永久允许"即可（同域
   不再弹）；想全自动见 [docs/auto-approve.md](docs/auto-approve.md)
 

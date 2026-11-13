@@ -38,6 +38,8 @@ def _to_send_result(payload: dict) -> SendResult:
 class GadgetAdapter:
     def __init__(self, config: cfg.Config | None = None):
         self.config = config or cfg.load_config()
+        from .tasks import TaskStore
+        self._tasks = TaskStore()
         if self.config.backend == "ssh":
             from .backend_ssh import SshBackend
             self.backend = SshBackend(self.config)
@@ -93,6 +95,85 @@ class GadgetAdapter:
         session = self._resolve(session_id)
         seconds = min(max(timeout or 240, 30), 600)
         return self.backend.images(prompt, session, seconds)
+
+    # -- image generation tasks ---------------------------------------------
+
+    def start_image_task(self, prompt: str, session_id: str | None = None) -> dict:
+        """Submit an image-generation request; returns the task record at once.
+
+        Does NOT wait for Muse: the MCP call stays fast, results are polled
+        via poll_image_task(). Local backend only.
+        """
+        if self.config.backend != "local":
+            return {"ok": False,
+                    "error": "image generation requires backend: local "
+                             "(the ssh backend's musegadget CLI has no media channel)"}
+        session = self._resolve(session_id)
+        task = self._tasks.create(prompt, session)
+        return {"ok": True, "task": task}
+
+    def poll_image_task(self, task_id: str, wait_seconds: int = 90) -> dict:
+        """Poll a task: if still pending, wait up to wait_seconds inside the
+        bridge (single long subscribe) and return the freshest state.
+
+        Timeout is a STATE, not an error: the task is kept and re-pollable.
+        """
+        if self.config.backend != "local":
+            return {"ok": False, "error": "local backend required"}
+        task = self._tasks.get(task_id)
+        if task is None:
+            return {"ok": False, "error": f"unknown task_id {task_id!r}"}
+        if task["status"] == "failed":
+            return {"ok": True, "task": task}
+        if task["status"] == "completed" and task.get("images"):
+            return {"ok": True, "task": task}
+        # completed-without-images falls through: Muse presentations can
+        # arrive late (or be re-presented on request), so re-polls absorb
+        # newly seen links instead of short-circuiting on the old state.
+        # First poll delivers the original prompt; later polls must NOT
+        # regenerate and must NOT re-upload (each upload burns an egress
+        # approval) — just ask Muse to re-present the existing file card.
+        message = task["prompt"]
+        if task.get("sent_prompt"):
+            message = ("请把刚才生成图片的 muse.ai/files 文件卡片链接再发一次"
+                       "（贴在回复里即可，不要重新上传，不要重新画）。")
+        self._tasks.update(task_id, sent_prompt=True, status="pending")
+        try:
+            payload = self.backend.images(message, task["session_id"], wait_seconds)
+        except Exception as exc:  # noqa: BLE001 — bridge crash must not lose the task
+            self._tasks.update(task_id, status="timeout",
+                               error=f"bridge error: {exc}")
+            return {"ok": True, "task": self._tasks.get(task_id)}
+
+        if not payload.get("ok"):
+            self._tasks.update(task_id, status="failed", error=str(payload.get("error", "")))
+            return {"ok": True, "task": self._tasks.get(task_id)}
+
+        updates: dict = {}
+        approvals = payload.get("approvals") or []
+        images = payload.get("images") or []
+        if approvals and not images:
+            updates["status"] = "approval_required"
+            updates["approvals"] = approvals
+        elif images:
+            self._tasks.add_images(task_id, images)
+            updates["status"] = "completed"
+            updates["reply"] = payload.get("reply", "")
+            updates["approvals"] = approvals
+        elif payload.get("status") == "timeout":
+            updates["status"] = "timeout"
+            updates["reply"] = payload.get("reply", "")
+        elif payload.get("status") == "failed":
+            updates["status"] = "failed"
+            updates["error"] = payload.get("detail", "")
+        else:
+            # completed turn, no images, no approvals — Muse answered without media
+            updates["status"] = "completed"
+            updates["reply"] = payload.get("reply", "")
+        if payload.get("reply") and not updates.get("reply"):
+            updates["reply"] = payload["reply"]
+        self._tasks.update(task_id, **updates)
+        return {"ok": True, "task": self._tasks.get(task_id)}
 
     def doctor(self) -> dict:
         return self.backend.doctor()

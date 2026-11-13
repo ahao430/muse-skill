@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 
 from mcp.server.fastmcp import FastMCP
 
+from . import config as cfg
 from .adapter import GadgetAdapter, MuseUnavailable, NotPaired
 
 mcp = FastMCP("muse-agent")
@@ -35,6 +37,44 @@ def _adapter_error_text(exc: Exception) -> str:
             "(scripts/provision.sh sets it up)."
         )
     return str(exc)
+
+
+# Inline-image budget for MCP responses: 4 MiB of raw bytes ≈ 5.4 MiB base64.
+_MAX_INLINE_BYTES = 4 * 1024 * 1024
+
+
+def _read_file_bytes(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _download_image(url: str, task_id: str, index: int) -> str:
+    """Download a public muse.ai/files link to a persistent per-task file."""
+    import urllib.request
+
+    dest_dir = cfg.CONFIG_DIR / "images" / task_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"image-{index}.webp"
+    req = urllib.request.Request(url, headers={"User-Agent": "muse-agent/0.1"})
+    with urllib.request.urlopen(req, timeout=60) as resp, dest.open("wb") as f:
+        f.write(resp.read())
+    return str(dest)
+
+
+def _download_task_images(task_id: str, images: list[dict]) -> None:
+    """Fill in `path` for task images missing one; skips known URLs so a
+    repeated poll never re-downloads."""
+    import os
+
+    for index, img in enumerate(images):
+        if img.get("path") and os.path.exists(img["path"]):
+            continue
+        if not img.get("url", "").startswith("https://muse.ai/"):
+            continue
+        try:
+            img["path"] = _download_image(img["url"], task_id, index)
+        except Exception as exc:  # noqa: BLE001 — keep other images flowing
+            img["download_error"] = str(exc)
 
 
 @mcp.tool()
@@ -120,49 +160,114 @@ async def muse_doctor() -> dict:
 
 
 @mcp.tool()
-async def muse_get_images(
-    prompt: str | None = None,
+async def muse_start_image_generation(
+    prompt: str,
     session_id: str | None = None,
-    timeout: int | None = None,
 ) -> dict:
-    """Ask Muse to generate images and get them back as downloadable files.
+    """Submit an image-generation request to Muse and return a task_id at once.
 
-    prompt describes what to draw (default: re-share its latest generated
-    media as public links). Muse renders via its generate_image tool; this
-    tool waits for the reply, extracts the public muse.ai/files URLs from
-    the presentation events, downloads each to a local temp file, and
-    returns the file paths. Local backend only.
+    Non-blocking: Muse renders asynchronously (tens of seconds), so follow up
+    with muse_get_image_result(task_id) instead of waiting here. Do NOT call
+    this twice for the same drawing — repeated polls of the same task never
+    re-generate.
     """
-    import tempfile
-    import urllib.request
-
     try:
-        payload = await _call(_adapter.get_images, prompt, session_id, timeout)
+        return await _call(_adapter.start_image_task, prompt, session_id)
     except (MuseUnavailable, NotPaired) as exc:
         return {"ok": False, "error": _adapter_error_text(exc)}
-    if not payload.get("ok"):
-        return {"ok": False, "error": payload.get("error", "image collection failed")}
-    saved = []
-    for img in payload.get("images", []):
-        url = img.get("url")
-        if not url:
+
+
+@mcp.tool()
+async def muse_get_image_result(
+    task_id: str,
+    wait_seconds: int = 90,
+    return_image: bool = True,
+) -> list:
+    """Poll an image-generation task; on completion return Muse's drawings as
+    native MCP image content plus local file paths.
+
+    Statuses: pending / approval_required / completed / timeout / failed.
+    timeout means Muse is still working — the task is kept, just call this
+    again later (optionally wait_seconds>0). Never re-generates on re-poll.
+    If status is approval_required, approve the egress card in the Muse app
+    (choose "allow always"), then poll again (see docs/auto-approve.md).
+    """
+    import base64
+    import mcp.types as mt
+
+    blocks: list = []
+    try:
+        result = await _call(_adapter.poll_image_task, task_id, max(0, min(wait_seconds, 240)))
+        if result.get("task", {}).get("images"):
+            await _call(_download_task_images, task_id, result["task"]["images"])
+    except (MuseUnavailable, NotPaired) as exc:
+        return [mt.TextContent(type="text", text=_adapter_error_text(exc))]
+    task = result.get("task", {})
+    status = task.get("status", "unknown")
+    meta = {
+        "task_id": task_id,
+        "status": status,
+        "reply": task.get("reply", ""),
+        "images": [],
+        "error": task.get("error", ""),
+    }
+    if status == "approval_required":
+        meta["approvals"] = task.get("approvals", [])
+        meta["hint"] = ("在 Muse app 中批准外联审批（建议选永久允许），批准后任务自动继续，"
+                        "再次调用 muse_get_image_result 查询。详见 docs/auto-approve.md")
+    if status == "timeout":
+        meta["hint"] = ("Muse 仍在生成/等待上传，任务未丢失：稍后再次调用 "
+                        "muse_get_image_result(task_id) 即可，不会重新生成。")
+
+    for img in task.get("images", []):
+        entry = {"label": img.get("label", ""), "url": img.get("url", ""),
+                 "width": img.get("width"), "height": img.get("height"),
+                 "path": img.get("path", ""), "inline": False}
+        meta["images"].append(entry)
+        if not return_image or not img.get("path"):
             continue
         try:
-            def _download(u=url):
-                import urllib.request as ur
-                req = ur.Request(u, headers={"User-Agent": "muse-agent/0.1"})
-                with ur.urlopen(req, timeout=60) as resp, tempfile.NamedTemporaryFile(
-                        suffix=".webp", delete=False) as f:
-                    f.write(resp.read())
-                    return f.name
-            path = await _call(_download)
-            saved.append({"path": path, "label": img.get("label", ""),
-                          "url": url, "width": img.get("width"), "height": img.get("height")})
-        except Exception as exc:  # noqa: BLE001 — one bad URL must not kill the batch
-            saved.append({"url": url, "error": str(exc)})
-    return {"ok": True, "reply": payload.get("reply", ""),
-            "note": "sandbox 里的原图链接外部不可达；这里返回的是 Muse 转存的公网直链与本地落盘路径",
-            "images": saved}
+            raw = await _call(_read_file_bytes, img["path"])
+            if len(raw) > _MAX_INLINE_BYTES:
+                entry["note"] = (f"image too large to inline ({len(raw):,} B > "
+                                 f"{_MAX_INLINE_BYTES:,} B); use the local path")
+                continue
+            blocks.append(mt.ImageContent(
+                type="image", data=base64.b64encode(raw).decode(),
+                mimeType=img.get("mime") or "image/webp"))
+            entry["inline"] = True
+        except Exception as exc:  # noqa: BLE001 — one bad download must not kill the batch
+            entry["error"] = str(exc)
+    blocks.insert(0, mt.TextContent(
+        type="text",
+        text=json.dumps(meta, ensure_ascii=False, indent=1),
+    ))
+    return blocks
+
+
+@mcp.tool()
+async def muse_get_images(
+    prompt: str,
+    session_id: str | None = None,
+    timeout: int = 180,
+    return_image: bool = True,
+) -> list:
+    """Convenience: start an image generation, then poll until done (or
+    timeout) in one call. Equivalent to muse_start_image_generation followed
+    by muse_get_image_result. Prefer the split tools when you want to
+    report progress to the user instead of blocking.
+    """
+    import mcp.types as mt
+
+    started = await muse_start_image_generation.fn(prompt, session_id) \
+        if hasattr(muse_start_image_generation, "fn") else \
+        await muse_start_image_generation(prompt, session_id)
+    if not started.get("ok"):
+        return [mt.TextContent(type="text",
+                               text=json.dumps(started, ensure_ascii=False))]
+    task_id = started["task"]["task_id"]
+    return await muse_get_image_result(task_id, wait_seconds=timeout,
+                                       return_image=return_image)
 
 
 @mcp.tool()

@@ -93,49 +93,77 @@ async function chatTurn(client, message, chatOpts) {
 
 /** Send a message and collect the reply plus any public image URLs from
  * Muse's generated-media presentations. Muse hosts finished media on
- * muse.ai/files/… (sandbox paths are unreachable externally). */
+ * muse.ai/files/… (sandbox paths are unreachable externally).
+ *
+ * Returns a task-state object (never throws for timeouts):
+ *   status: completed | timeout | failed
+ *   reply, images[], approvals[], task_done
+ * Approvals: when Muse's VM needs egress approval (files.upload etc.) the
+ * approvals.snapshot event carries pending_approvals — surfaced so the
+ * caller can tell "waiting for human approval" apart from a dead turn. */
 async function chatCollect(message, chatOpts) {
-  let client = arguments.length >= 3 ? arguments[2] : await connect(chatOpts.rootOpts ?? {});
+  const client = await connect(chatOpts.rootOpts ?? {});
   let reply = '';
   const images = [];
+  const approvals = [];
   const addImage = (img) => {
     if (img && img.url && !images.some(i => i.url === img.url)) images.push(img);
   };
-  if (!chatOpts.first) {
-    const { MuseTurn } = await import('muse-client');
-    const signal = AbortSignal.timeout(chatOpts.timeoutMs ?? 240000);
-    const sub = await client.subscribe({ sessionId: chatOpts.sessionId, signal });
-    try {
-      const turn = new MuseTurn({ sessionId: chatOpts.sessionId, ownsChat: true });
-      const ack = await client.sendMessage(message, { sessionId: chatOpts.sessionId, images: chatOpts.images, signal });
-      for (const ev of turn.acknowledge(ack)) collectFromEvent(ev, addImage, t => reply = t);
-      for await (const ev of sub) {
-        collectFromEvent(ev, addImage, t => reply = t);
-        turn.feed(ev);
-        if (turn.complete()) break;
-      }
-    } catch (e) {
-      if (!/timeout|abort|TimeoutError/i.test(String(e?.name) + String(e?.message))) throw e;
-    } finally { sub.close(); }
-    return { reply, images };
-  }
-  // first:true — message creates the chat; subscribe only after send
+  const { MuseTurn } = await import('muse-client');
+  let first = !!chatOpts.first;
+  let timedOut = false;
+  const turn = new MuseTurn({ sessionId: chatOpts.sessionId, ownsChat: true });
+  // Hard cap on the whole wait. MuseTurn.complete() only flips when events
+  // arrive; without this the iterator can hang forever on a silent turn.
   const signal = AbortSignal.timeout(chatOpts.timeoutMs ?? 240000);
-  const ack = await client.sendMessage(message, { sessionId: chatOpts.sessionId, images: chatOpts.images, signal });
-  const sub = await client.subscribe({ sessionId: chatOpts.sessionId, signal });
+  let sub;
+  let sendError = null;
   try {
-    const { MuseTurn } = await import('muse-client');
-    const turn = new MuseTurn({ sessionId: chatOpts.sessionId, ownsChat: true });
+    if (!first) sub = await client.subscribe({ sessionId: chatOpts.sessionId, signal });
+  } catch (e) {
+    // 404: chat does not exist yet → create it by sending first (below).
+    if (!/HTTP (400|404)/.test(String(e?.message))) { client.close(); throw e; }
+    sub = null;
+    first = true;
+  }
+  try {
+    let ack;
+    try {
+      ack = await client.sendMessage(message, { sessionId: chatOpts.sessionId, images: chatOpts.images, signal });
+    } catch (e) {
+      sendError = e;   // send failed → task genuinely failed, do not fake success
+      throw e;
+    }
+    if (!sub) sub = await client.subscribe({ sessionId: chatOpts.sessionId, signal });
     for (const ev of turn.acknowledge(ack)) collectFromEvent(ev, addImage, t => reply = t);
     for await (const ev of sub) {
+      if (ev.event === 'approvals.snapshot') {
+        const pending = ev.payload?.pending_approvals ?? [];
+        if (pending.length) approvals.push(...pending.map(p => ({
+          action_label: p?.display?.action_label ?? '',
+          detail_rows: p?.display?.detail_rows ?? [],
+          approval_id: p?.approval_id ?? '',
+        })));
+      }
       collectFromEvent(ev, addImage, t => reply = t);
       turn.feed(ev);
       if (turn.complete()) break;
     }
   } catch (e) {
-    if (!/timeout|abort|TimeoutError/i.test(String(e?.name) + String(e?.message))) throw e;
-  } finally { sub.close(); }
-  return { reply, images };
+    if (/timeout|abort|cancel|TimeoutError/i.test(String(e?.name) + String(e?.message))) {
+      timedOut = true;
+    } else if (!sendError) {
+      throw e;
+    }
+  } finally {
+    try { sub?.close(); } catch { /* already closed by abort */ }
+    client.close();
+  }
+  return {
+    status: sendError ? 'failed' : (timedOut ? 'timeout' : 'completed'),
+    reply, images, approvals,
+    detail: sendError ? String(sendError.message) : '',
+  };
 }
 
 function collectFromEvent(ev, addImage, setText) {
@@ -143,6 +171,13 @@ function collectFromEvent(ev, addImage, setText) {
   const payload = ev?.raw?.payload ?? ev?.payload;
   const pres = payload?.presentations ?? (payload?.data ? [payload.data] : []);
   for (const p of pres) {
+    // File-card form: {url, fallback_text} — Muse shares a single finished
+    // media link this way (no images[] array at all).
+    const cardUrl = p?.url ?? null;
+    if (cardUrl && /https:\/\/(muse\.ai|www\.muse\.ai)\//.test(cardUrl)) {
+      addImage({ url: cardUrl, label: (p.fallback_text ?? '').slice(0, 60),
+                 mime: cardUrl.endsWith('.png') ? 'image/png' : 'image/webp' });
+    }
     for (const img of p?.images ?? []) {
       const url = img?.variants?.original ?? img?.variants?.large ?? null;
       // Only public muse.ai links are fetchable; sandbox URLs are not.
@@ -256,24 +291,46 @@ async function main() {
 
   if (cmd === 'images') {
     // Ask Muse to generate (or re-share) media, then collect public
-    // muse.ai/files links from the reply's presentations.
+    // muse.ai/files links from the reply's presentations. Status-aware:
+    // timeout/approval_required are surfaced, never faked as success.
     const message = pos[0] ?? '把你最近生成的图片上传为公网可访问的 muse.ai/files 链接，只发链接。';
     const timeoutMs = (opts.timeout ? Number(opts.timeout) : 240) * 1000;
+    if (!opts.session) fail('images requires --session <uuid> (use muse_sessions to create one)');
     try {
-      let client = await connect(opts);
+      let result;
       try {
-        if (!opts.session) fail('images requires --session <uuid> (use muse_sessions to create one)');
-        let result;
-        try {
-          result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs });
-        } catch (e) {
-          if (!/HTTP (400|404)/.test(String(e?.message))) throw e;
-          client.close();
-          client = await connect(opts);
-          result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs, first: true });
-        }
-        out({ ok: true, reply: result.reply, images: result.images });
-      } finally { client.close(); }
+        result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs, rootOpts: opts });
+      } catch (e) {
+        if (!/HTTP (400|404)/.test(String(e?.message))) throw e;
+        result = await chatCollect(message, { sessionId: opts.session, ownsChat: true, timeoutMs, first: true, rootOpts: opts });
+      }
+      // Muse renders into its sandbox (no public URLs yet). Unless the ask
+      // was itself an upload/reshare request, chain a second turn asking
+      // Muse to re-share the media as public muse.ai/files links.
+      const isReshareAsk = /muse\.ai\/files|转存|上传/i.test(message);
+      if (result.status === 'completed' && result.images.length === 0 && !isReshareAsk) {
+        const share = await chatCollect(
+          '把刚才生成的图片上传为公网可访问的 muse.ai/files 链接，只发链接。',
+          { sessionId: opts.session, ownsChat: true,
+            timeoutMs: Math.min(timeoutMs, 240000), rootOpts: opts });
+        result.images.push(...share.images);
+        result.approvals.push(...share.approvals);
+        if (!result.reply) result.reply = share.reply;
+        if (share.status === 'failed') result.status = 'failed';
+        else if (share.status === 'timeout' && result.images.length === 0) result.status = 'timeout';
+        else result.status = 'completed';
+      }
+      const blocked = result.status === 'completed' && result.images.length === 0 && result.approvals.length > 0;
+      out({
+        ok: result.status !== 'failed',
+        status: blocked ? 'approval_required' : result.status,
+        reply: result.reply,
+        images: result.images,
+        approvals: result.approvals,
+        detail: result.detail || (result.status === 'timeout'
+          ? 'still generating (or waiting for upload approval) — task is NOT lost, retry images/muse_get_images later'
+          : ''),
+      });
     } catch (e) { fail(e); }
     return;
   }

@@ -17,7 +17,9 @@ Send messages to Muse and receive answers (text and images), through the
 | `muse_chat(message, session_id?, timeout?)` | Ask Muse something and get its answer |
 | `muse_send(message, session_id?)` | Notify Muse without waiting (fire-and-forget) |
 | `muse_send_image(image_path, message?, …)` | Show Muse a picture (≤2 MiB, JPEG/PNG/GIF/WebP) |
-| `muse_get_images(prompt?, …)` | Ask Muse to draw and get the images back as local file paths (local backend only) |
+| `muse_start_image_generation(prompt)` | Ask Muse to draw; returns task_id immediately (non-blocking) |
+| `muse_get_image_result(task_id)` | Poll the task; on completion returns native MCP images + local paths |
+| `muse_get_images(prompt, timeout?)` | Convenience: start + poll in one call (blocks up to timeout) |
 | `muse_doctor()` | When status looks broken: setup checklist with next commands |
 | `muse_sessions(label?)` | Create/list agent side chats |
 
@@ -36,10 +38,17 @@ Send messages to Muse and receive answers (text and images), through the
 ## Workflows
 
 - **Consult Muse**: `muse_chat("Review this API design: …")`, relay the answer.
+- **Draw an image**: use `muse_start_image_generation(prompt)` then
+  `muse_get_image_result(task_id, wait_seconds=90)`. The result returns
+  native MCP images (rendered inline by the client) plus local file paths.
+  - status `approval_required`: tell the user to approve the egress card in
+    the Muse app (choose "allow always" to stop future prompts), then poll
+    again — the task is kept, nothing re-generates.
+  - status `timeout`: Muse is still working; poll again later. Never
+    re-submit the same drawing.
+  - If the client cannot render images, give the user the local paths.
 - **Long tasks**: `muse_send` the request, then poll with `muse_chat`
   follow-ups ("status?") in the same `session_id`.
-- **Analysis/drawing**: just ask in natural language via `muse_chat`; Muse
-  decides what to do. Image results land in the Muse chat, not in this tool.
 
 ## Constraints
 
