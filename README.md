@@ -256,6 +256,8 @@ Claude Code 一条命令：`claude mcp add muse -- uv --directory /path/to/muse-
 ```sh
 cp -r skills/muse ~/.agents/skills/muse      # Zcode
 cp -r skills/muse ~/.claude/skills/muse      # Claude Code
+# COS 上传技能（可选）：本机文件上传 COS 拿永久直链，复用同一份 cos_* 配置
+cp -r skills/cos  ~/.agents/skills/cos       # 纯 stdlib，系统 python3 即可
 ```
 
 ## 三、使用方法
@@ -273,6 +275,7 @@ cp -r skills/muse ~/.claude/skills/muse      # Claude Code
 | 「让 Muse 画一张 xx 的图」 | `muse_start_image_generation(prompt)` → 拿 task_id → `muse_get_image_result(task_id)` 返回**原生 MCP 图片**（对话内直接显示）+ 本地路径；或一步到位 `muse_get_images(prompt)` |
 | 「开个新会话专门讨论 X」 | `muse_sessions(label="X")` → 拿 `session_id` 后持续追问 |
 | 「看看 Muse 有没有新通知」 | `muse_notifications(wait_seconds)` ← 被动收 Muse 主动推来的消息/图片（需先给 Muse 装 [muse-side/zcode-bridge](muse-side/README.md) 技能） |
+| 「把这个文件/图片传到 COS 拿直链」 | [skills/cos](skills/cos/SKILL.md) 技能：`python3 ~/.agents/skills/cos/cos.py upload 文件 --md`（纯 stdlib、复用 cos_* 配置、直链永久） |
 
 行为约定（agent 的 SKILL.md 已内置）：
 - 首次会话先 `muse_status`；未配对会收到指向 `docs/pairing.md` 的引导
@@ -364,5 +367,6 @@ src/muse_agent/
 bridge/bridge.mjs  muse-client 的 JSON CLI（pair/status/send/chat/image/notifications）
 bridge/node-proxy.mjs  node+global-agent 代理运行器（proxychains 不可用时兜底）
 muse-side/         发给 Muse 安装的 zcode-bridge 技能（zip）
+skills/            Agent Skills：muse（Muse 工具用法）+ cos（本机文件传 COS）
 scripts/           provision.sh / import_state.sh / setup.sh
 ```
