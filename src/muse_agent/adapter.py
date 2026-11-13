@@ -154,7 +154,8 @@ class GadgetAdapter:
                 message = (
                     "把刚才生成的图片用 curl 上传到这个预签名地址（不要重新画）：\n"
                     f"curl -X PUT --data-binary @文件 '{upload['put_url']}'\n"
-                    f"上传成功后回复直链：{upload['public_url']}"
+                    "上传成功后用 Markdown 图片语法回复（不要发裸链接）：\n"
+                    f"![图片]({upload['public_url']})"
                 )
             else:
                 message = ("请把刚才生成图片的 muse.ai/files 文件卡片链接再发一次"

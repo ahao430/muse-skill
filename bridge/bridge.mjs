@@ -369,7 +369,8 @@ async function main() {
           const publicUrl = u.origin + u.pathname;
           shareMsg = '把刚才生成的图片用 curl 上传到这个预签名地址（不要重新画）：\n'
             + `curl -X PUT --data-binary @图片文件 '${opts.uploadUrl}'\n`
-            + `上传成功后回复这个直链：${publicUrl}`;
+            + '上传成功后用 Markdown 图片语法回复（不要发裸链接）：\n'
+            + `![图片](${publicUrl})`;
         }
         const share = await chatCollect(
           shareMsg,
