@@ -240,3 +240,120 @@ def test_muse_get_images_convenience(tmp_path, monkeypatch):
     blocks = _run(server.muse_get_images("draw a kitten", timeout=5))
     images = [b for b in blocks if b.type == "image"]
     assert len(images) == 1
+
+
+# ------------------------------------------------------- notifications tool
+
+def test_notifications_dedupe_and_blocks(tmp_path, monkeypatch):
+    import muse_agent.server as server
+    from muse_agent import config as cfg_mod
+
+    seen_file = tmp_path / "seen.json"
+    monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(cfg_mod, "SESSIONS_FILE", tmp_path / "sessions.json")
+    # CONFIG_DIR is read at call time inside adapter via cfg.CONFIG_DIR attribute
+    import muse_agent.adapter as ad_mod
+    monkeypatch.setattr(ad_mod.cfg, "CONFIG_DIR", tmp_path, raising=False)
+
+    calls = {"n": 0}
+
+    class FakeBackend:
+        def notifications(self, session_id, listen_seconds):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return {"ok": True,
+                        "messages": [{"message_id": "m1", "text": "任务完成了", "done": True}],
+                        "images": [{"url": "https://muse.ai/files/a.webp", "label": "cat",
+                                    "mime": "image/png"}]}
+            return {"ok": True, "messages": [], "images": []}
+
+    class FakeAdapter:
+        config = Config(backend="local")
+        backend = None
+
+        def _resolve(self, session_id):
+            return "sess-default"
+
+        def notifications(self, wait_seconds):
+            if self.backend is None:
+                self.backend = FakeBackend()
+            return self.backend.notifications(None, wait_seconds)
+
+    fake = FakeAdapter()
+    monkeypatch.setattr(server, "_adapter", fake)
+
+    png = tmp_path / "dl.png"
+    png.write_bytes(b"PNGDATA")
+
+    def fake_download(url, task_id, index):
+        assert url.endswith("a.webp")
+        return str(png)
+
+    monkeypatch.setattr(server, "_download_image", fake_download)
+
+    blocks = _run(server.muse_notifications(wait_seconds=0))
+    meta = json.loads(blocks[0].text)
+    assert meta["messages"][0]["text"] == "任务完成了"
+    assert meta["images"][0]["inline"] is True and meta["images"][0]["path"] == str(png)
+    assert [b for b in blocks if b.type == "image"], "image must inline"
+
+    # second poll: everything already seen → no re-delivery
+    blocks2 = _run(server.muse_notifications(wait_seconds=0))
+    meta2 = json.loads(blocks2[0].text)
+    assert meta2["messages"] == [] and meta2["images"] == []
+    assert not [b for b in blocks2 if b.type == "image"]
+
+
+def test_backend_local_notifications_args(tmp_path, monkeypatch):
+    from muse_agent import backend_local as bl
+
+    bridge = tmp_path / "bridge"
+    bridge.mkdir()
+    (bridge / "bridge.mjs").write_text("//")
+    calls = []
+
+    def fake_run(args, timeout):
+        calls.append((args, timeout))
+        return {"ok": True, "messages": [], "images": []}
+
+    monkeypatch.setattr(bl.LocalBackend, "_run", lambda self, args, timeout: fake_run(args, timeout))
+    cfg = Config(backend="local", bridge_dir=str(bridge))
+    result = bl.LocalBackend(cfg).notifications("sess-1", 5)
+    assert result["ok"] is True
+    args, timeout = calls[0]
+    assert args[:2] == ["notifications", "--timeout"]
+    assert args[args.index("--session") + 1] == "sess-1"
+    assert timeout == 35
+
+
+def test_adapter_notifications_seen_state(tmp_path, monkeypatch):
+    from muse_agent import config as cfg_mod
+    from muse_agent import tasks as tm
+
+    bridge = tmp_path / "bridge"
+    bridge.mkdir()
+    (bridge / "bridge.mjs").write_text("//")
+    monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(cfg_mod, "SESSIONS_FILE", tmp_path / "sessions.json")
+    monkeypatch.setattr(tm.TaskStore, "_load", lambda self: None)
+    monkeypatch.setattr(tm.TaskStore, "_save", lambda self: None)
+
+    state = {"n": 0}
+
+    class FakeBackend:
+        def notifications(self, session_id, listen_seconds):
+            state["n"] += 1
+            return {"ok": True,
+                    "messages": [{"message_id": "m9", "text": "hi", "done": True}],
+                    "images": [{"url": "https://muse.ai/files/z.webp"}]}
+
+    cfg = Config(backend="local", bridge_dir=str(bridge))
+    ad = GadgetAdapter(cfg)
+    ad.backend = FakeBackend()
+    monkeypatch.setattr(ad, "_resolve", lambda s=None: "sess-x")
+
+    first = ad.notifications(0)
+    assert len(first["messages"]) == 1 and len(first["images"]) == 1
+    second = ad.notifications(0)   # same ids again → filtered by seen-state
+    assert second["messages"] == [] and second["images"] == []
+    assert (tmp_path / "notifications-seen.json").exists()

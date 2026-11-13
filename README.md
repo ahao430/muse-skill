@@ -250,6 +250,7 @@ cp -r skills/muse ~/.claude/skills/muse      # Claude Code
 | 「给 Muse 发个通知，不用等回复」 | `muse_send(message)` |
 | 「让 Muse 画一张 xx 的图」 | `muse_start_image_generation(prompt)` → 拿 task_id → `muse_get_image_result(task_id)` 返回**原生 MCP 图片**（对话内直接显示）+ 本地路径；或一步到位 `muse_get_images(prompt)` |
 | 「开个新会话专门讨论 X」 | `muse_sessions(label="X")` → 拿 `session_id` 后持续追问 |
+| 「看看 Muse 有没有新通知」 | `muse_notifications(wait_seconds)` ← 被动收 Muse 主动推来的消息/图片（需先给 Muse 装 [muse-side/zcode-bridge](muse-side/README.md) 技能） |
 
 行为约定（agent 的 SKILL.md 已内置）：
 - 首次会话先 `muse_status`；未配对会收到指向 `docs/pairing.md` 的引导

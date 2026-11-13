@@ -1,0 +1,4 @@
+name: zcode-bridge
+description: "把 Muse 的结果、图片与任务通知转达给用户的 Zcode 编程 agent：Zcode 在专用侧聊会话里轮询，Muse 按协议发出通知（文本/图片链接/结构化卡片）"
+version: 0.1.0
+entry: SKILL.md

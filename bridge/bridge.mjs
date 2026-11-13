@@ -227,6 +227,48 @@ async function main() {
     return;
   }
 
+  if (cmd === 'notifications') {
+    // Passive listen: subscribe WITHOUT sending; collect text messages and
+    // public muse.ai/files links Muse pushes while we listen. Events are
+    // live-only (no replay), so this sees only what arrives during the window.
+    const listenSec = Math.min(Math.max(Number(opts.timeout ?? 8), 1), 60);
+    if (!opts.session) fail('notifications requires --session <uuid>');
+    const client = await connect(opts);
+    const messages = [];   // {message_id, text, done}
+    const images = [];     // same shape as images command
+    const buffers = new Map();
+    const addImage = (img) => {
+      if (img && img.url && !images.some(i => i.url === img.url)) images.push(img);
+    };
+    try {
+      const signal = AbortSignal.timeout(listenSec * 1000);
+      const sub = await client.subscribe({ sessionId: opts.session, signal });
+      try {
+        for await (const ev of sub) {
+          if (ev.event === 'delta.text_append') {
+            const p = ev.payload ?? {};
+            const buf = buffers.get(p.message_id) ?? { message_id: p.message_id, text: '', done: false };
+            buf.text += p.text ?? '';
+            buffers.set(p.message_id, buf);
+          } else if (ev.event === 'delta.message_done') {
+            const id = (ev.payload ?? {}).message_id;
+            const buf = buffers.get(id);
+            if (buf) { buf.done = true; messages.push(buf); buffers.delete(id); }
+          } else if (ev.event === 'delta.presentation') {
+            // reuse the card/images extraction from collectFromEvent
+            collectFromEvent({ payload: ev.payload }, addImage, () => {});
+          }
+        }
+      } finally { sub.close?.(); }
+    } catch (e) {
+      if (!/timeout|abort|cancel|TimeoutError/i.test(String(e?.name) + String(e?.message))) throw e;
+    } finally { client.close(); }
+    // keep partial (undone) streams too — Muse may still have been mid-reply
+    for (const buf of buffers.values()) if (buf.text.trim()) messages.push(buf);
+    out({ ok: true, messages, images });
+    return;
+  }
+
   if (cmd === 'send' || cmd === 'chat' || cmd === 'image') {
     const message = cmd === 'image' ? (pos[1] ?? '') : pos[0];
     if (cmd !== 'image' && message === undefined) fail('missing message');

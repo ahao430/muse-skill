@@ -9,6 +9,7 @@ Sessions (side-chat bookkeeping) are backend-independent local state.
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 
@@ -174,6 +175,32 @@ class GadgetAdapter:
             updates["reply"] = payload["reply"]
         self._tasks.update(task_id, **updates)
         return {"ok": True, "task": self._tasks.get(task_id)}
+
+    def notifications(self, wait_seconds: int = 8) -> dict:
+        """Collect what Muse pushed to the agent's side chat since… well, since
+        we started listening. Live-only (no server replay): catches messages
+        and media links Muse sends during the listen window. Filters out items
+        already seen by previous polls (persisted seen-state)."""
+        if self.config.backend != "local":
+            return {"ok": False,
+                    "error": "notifications require backend: local"}
+        session = self._resolve(None)
+        payload = self.backend.notifications(session, max(1, min(wait_seconds, 60)))
+        seen_path = cfg.CONFIG_DIR / "notifications-seen.json"
+        try:
+            seen = set(json.loads(seen_path.read_text()))
+        except (OSError, ValueError):
+            seen = set()
+        fresh_messages = [m for m in payload.get("messages", [])
+                          if m.get("message_id") and m["message_id"] not in seen]
+        fresh_images = [i for i in payload.get("images", [])
+                        if i.get("url") and i["url"] not in seen]
+        new_ids = {m["message_id"] for m in fresh_messages} | {i["url"] for i in fresh_images}
+        if new_ids:
+            seen |= new_ids
+            seen_path.parent.mkdir(parents=True, exist_ok=True)
+            seen_path.write_text(json.dumps(sorted(seen)[-400:]))
+        return {"ok": True, "messages": fresh_messages, "images": fresh_images}
 
     def doctor(self) -> dict:
         return self.backend.doctor()

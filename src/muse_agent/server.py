@@ -271,6 +271,53 @@ async def muse_get_images(
 
 
 @mcp.tool()
+async def muse_notifications(wait_seconds: int = 8, return_image: bool = True) -> list:
+    """Collect messages and images Muse pushed to the agent's chat.
+
+    Passive listen (no message sent): catches what Muse sends during the
+    window. Requires the Muse-side "zcode-bridge" skill so Muse knows to
+    proactively send results/media links there (muse-side/zcode-bridge/).
+    Repeated polls never re-deliver items already returned.
+    """
+    import base64
+
+    import mcp.types as mt
+
+    try:
+        payload = await _call(_adapter.notifications, wait_seconds)
+    except (MuseUnavailable, NotPaired) as exc:
+        return [mt.TextContent(type="text", text=_adapter_error_text(exc))]
+    if not payload.get("ok"):
+        return [mt.TextContent(type="text",
+                               text=json.dumps(payload, ensure_ascii=False))]
+
+    meta = {"messages": payload.get("messages", []), "images": []}
+    blocks: list = []
+    for index, img in enumerate(payload.get("images", [])):
+        entry = {"label": img.get("label", ""), "url": img.get("url", ""),
+                 "path": "", "inline": False}
+        meta["images"].append(entry)
+        if not return_image or not img.get("url", "").startswith("https://muse.ai/"):
+            continue
+        try:
+            path = await _call(_download_image, img["url"], "notifications", index)
+            entry["path"] = path
+            raw = await _call(_read_file_bytes, path)
+            if len(raw) > _MAX_INLINE_BYTES:
+                entry["note"] = "too large to inline; local path kept"
+                continue
+            blocks.append(mt.ImageContent(
+                type="image", data=base64.b64encode(raw).decode(),
+                mimeType=img.get("mime") or "image/webp"))
+            entry["inline"] = True
+        except Exception as exc:  # noqa: BLE001
+            entry["error"] = str(exc)
+    blocks.insert(0, mt.TextContent(type="text",
+                  text=json.dumps(meta, ensure_ascii=False, indent=1)))
+    return blocks
+
+
+@mcp.tool()
 async def muse_wait(session_id: str, timeout: int | None = None) -> dict:
     """Not supported by the remote Muse CLI, which couples send+wait.
 
