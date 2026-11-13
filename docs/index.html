@@ -102,14 +102,73 @@
 
 <section class="wrap">
   <h2>快速开始</h2>
-  <ol class="steps">
-    <li>克隆仓库并跑向导：<code>git clone https://github.com/ahao430/muse-skill &amp;&amp; cd muse-skill &amp;&amp; scripts/setup.sh</code>（依赖 → token → 配对 → 验证，逐项引导）</li>
-    <li>没有 token？先到 <a href="https://gadgets.muse.ai/settings/sdk-tokens">gadgets.muse.ai</a> → Account → SDK tokens 生成 <code>mgst_…</code></li>
-    <li>手机 Muse app：Settings → Devices → Developer mode → Add Device，选终端显示的 <code>MuseGadgetXXXXXX</code></li>
-    <li>注册 MCP：<code>claude mcp add muse -- uv --directory …/muse-skill run muse-agent</code>（或把 <code>.mcp.json</code> 加进 Zcode 配置）</li>
-    <li>对 agent 说：「问一下 Muse ……」</li>
-  </ol>
+  <p class="lead">两条路线共用前置准备，配对方式与运行位置不同。<b>选一条按步骤走即可</b>；之后随时可切换后端（一行配置）。</p>
+  <div class="tabs">
+    <button class="tab active" data-tab="a">🅰 路线 A · Mac 直连 <small>推荐</small></button>
+    <button class="tab" data-tab="b">🅱 路线 B · Linux 常驻 <small>24/7</small></button>
+  </div>
+
+  <div class="tabpane" id="tab-a">
+    <h3>通用准备</h3>
+    <pre><code>git clone https://github.com/ahao430/muse-skill &amp;&amp; cd muse-skill
+uv sync &amp;&amp; uv run pytest            # Python 侧
+cd bridge &amp;&amp; bun install &amp;&amp; cd ..   # Node 侧
+
+# SDK Token：https://gadgets.muse.ai/settings/sdk-tokens → Account → SDK tokens
+mkdir -p ~/.config/muse-agent
+echo 'mgst_你的token' &gt; ~/.config/muse-agent/sdk_token &amp;&amp; chmod 600 ~/.config/muse-agent/sdk_token</code></pre>
+    <h3>A1 · 配对（一次性，之后手机彻底退役）</h3>
+    <pre><code>export MUSE_SDK_TOKEN=$(cat ~/.config/muse-agent/sdk_token)
+bun bridge/bridge.mjs pair
+# 手机 Muse app → Settings → Devices → Developer mode → Add Device (+)
+# → 选 MuseGadgetXXXXXX → 确认 → Wi-Fi 选 Use current connection</code></pre>
+    <h3>A2 · 验证</h3>
+    <pre><code>bun bridge/bridge.mjs status   # "paired": true, "ready": true</code></pre>
+    <div class="card" style="margin-top:10px"><p>✅ 完成。手机不再需要；也可用向导 <code>scripts/setup.sh</code> 自动走完以上步骤。</p></div>
+  </div>
+
+  <div class="tabpane" id="tab-b" hidden>
+    <h3>通用准备</h3>
+    <p class="lead">同路线 A（克隆 + 依赖 + SDK token）。</p>
+    <h3>B1 · 在配对机上配对（一次性；需蓝牙：USB 适配器 / 树莓派 / 笔记本）</h3>
+    <pre><code># WSL2（Windows 侧 usbipd 直通 USB 蓝牙）或 Debian/Ubuntu/树莓派：
+sudo apt install -y bluez python3-dbus python3-gi
+curl -fsSL -o install.sh https://raw.githubusercontent.com/facebookincubator/muse-gadget-sdk/main/linux/install.sh
+sudo bash install.sh --sdk-token mgst_… --yes
+sudo musegadget pair               # 10 分钟窗口，手机 app 操作同路线 A</code></pre>
+    <h3>B2 · 导出凭证（在配对机上）</h3>
+    <pre><code>sudo cp /var/lib/musegadget/{identity,pairing}.json ~/
+scp identity.json pairing.json 你@Mac:~/muse-pairing/   # 配对机使命结束</code></pre>
+    <h3>B3 · 部署常驻主机并导入</h3>
+    <pre><code>scripts/provision.sh --host USER@云主机 --sdk-token $(cat ~/.config/muse-agent/sdk_token)
+scripts/import_state.sh ~/muse-pairing --host USER@云主机</code></pre>
+    <h3>B4 · 切换后端并验证</h3>
+    <pre><code># ~/.config/muse-agent/config.yaml
+backend: ssh
+host: USER@云主机
+
+uv run muse-agent --status          # ready: true 即通</code></pre>
+  </div>
+
+  <h3 style="margin-top:22px">最后：注册 MCP</h3>
+  <pre><code>claude mcp add muse -- uv --directory …/muse-skill run muse-agent
+# 或把 .mcp.json 加进 Zcode 配置；然后对 agent 说：「问一下 Muse ……」</code></pre>
 </section>
+<style>
+  .tabs { display: flex; gap: 10px; margin: 16px 0 18px; flex-wrap: wrap; }
+  .tab { background: var(--panel); color: var(--muted); border: 1px solid var(--border);
+         border-radius: 10px; padding: 10px 18px; font-size: .95rem; cursor: pointer; font-weight: 600; }
+  .tab small { opacity: .7; font-weight: 400; }
+  .tab.active { color: #0d1117; background: var(--accent); border-color: transparent; }
+</style>
+<script>
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b === btn));
+      document.querySelectorAll('.tabpane').forEach(p => p.hidden = (p.id !== 'tab-' + btn.dataset.tab));
+    });
+  });
+</script>
 
 <section class="wrap">
   <h2>MCP 工具</h2>

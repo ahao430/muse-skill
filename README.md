@@ -90,36 +90,37 @@
 
 ## 二、配置步骤
 
-### 一键引导（推荐首次使用）
+> **选择你的路线**：[🅰 路线 A · Mac 直连](#路线-a--mac-直连默认推荐) ｜
+> [🅱 路线 B · Linux 常驻](#路线-b--linux-常驻)
+>
+> 也可以先跑一键向导 `scripts/setup.sh`（覆盖路线 A 全流程，逐项检查可重
+> 跑），或在 agent 里随时调 `muse_doctor` 获取带命令的体检清单。
+
+### 通用准备（两条路线都需要）
 
 ```sh
-scripts/setup.sh
-```
-
-向导会逐步检查并跳过已完成项：Python/Node 依赖 → SDK token（就地粘贴，
-不回显）→ 蓝牙配对（可选现场发起）→ 最终连接验证 + MCP 注册命令。
-
-也可随时在 agent 里调 `muse_doctor`：返回逐项体检清单（运行器、bridge
-脚本、依赖、凭证、连接），每一项缺失都给出**确切的下一步命令**。
-
-### 手动步骤
-
-```sh
-# 仓库依赖
-uv sync && uv run pytest              # Python 侧（23 个测试）
+# 1. 仓库依赖
+uv sync && uv run pytest              # Python 侧
 cd bridge && bun install && cd ..     # Node 侧（需要 bun；Node ≥22.18 也可）
 
-# SDK Token（等同凭证，勿入 git、勿贴聊天）
-#   https://gadgets.muse.ai/settings/sdk-tokens → Account → SDK tokens → 新建
-#   得到 mgst_… 串；保存到本地文件（供配对脚本读取，不出现在终端历史里更佳）
+# 2. SDK Token（等同凭证，勿入 git、勿贴聊天）
+#    https://gadgets.muse.ai/settings/sdk-tokens → Account → SDK tokens → 新建
 mkdir -p ~/.config/muse-agent
 echo 'mgst_你的token' > ~/.config/muse-agent/sdk_token && chmod 600 ~/.config/muse-agent/sdk_token
 ```
 
-网络要求：配对时**手机**和 Mac 都要能访问 `hatch-api.meta.ai` /
-`api.muse.ai`（国内网络可能需代理）。日常使用只需 Mac 能通。
+网络要求：配对时**手机**和**配对机**都要能访问 `hatch-api.meta.ai` /
+`api.muse.ai`（国内网络可能需代理）。日常使用只需运行机（Mac/Windows）
+能通，手机不再参与。
 
-### 1. 配对（一次性，路线 A）
+---
+
+### 路线 A · Mac 直连（默认，推荐）
+
+> 5 分钟打通。**配对后手机彻底退役**——App 可关、可离线、可卸载（只要
+> 别在 app 里删除这台设备）。
+
+**A1. 配对（一次性）**
 
 ```sh
 export MUSE_SDK_TOKEN=$(cat ~/.config/muse-agent/sdk_token)
@@ -129,16 +130,71 @@ bun bridge/bridge.mjs pair
 #   → 选 MuseGadget782C99 → 确认 community 提示 → Wi-Fi 选 Use current connection
 # 看到 "Paired successfully" 即完成；凭证存
 #   ~/Library/Application Support/MuseGadgetPair/（勿删，token 自动刷新）
-
-bun bridge/bridge.mjs status          # 验证：应返回 "paired": true, "ready": true
 ```
 
-之后**手机不再参与任何环节**；Mac 睡眠/关机也不影响凭证，重开后自动重连。
+**A2. 验证**
 
-路线 B 的 Linux 配对 + 凭证导入见 [docs/pairing.md](docs/pairing.md) 方式二
-（`scripts/provision.sh` 一键部署云主机，`scripts/import_state.sh` 导入凭证）。
+```sh
+bun bridge/bridge.mjs status          # 应返回 "paired": true, "ready": true
+```
 
-### 2. 注册 MCP server
+**A3. 注册 MCP + 安装 Skill**（见下方[通用收尾](#3-注册-mcp--安装-skill两条路线相同)）
+
+---
+
+### 路线 B · Linux 常驻
+
+> 24/7 在线。授权在**一台有蓝牙的 Linux** 上做一次（云主机没蓝牙，需插
+> USB 蓝牙适配器；树莓派/笔记本自带即可），凭证导入常驻主机后**配对机
+> 即可退役**。
+
+**B1. 在配对机上配对**（一次性，之后这台机器不再需要）
+
+任选：WSL2（Windows 侧 `usbipd` 直通 USB 蓝牙）或树莓派/Debian/Ubuntu：
+
+```sh
+sudo apt install -y bluez python3-dbus python3-gi      # WSL2 里可能还需蓝牙服务
+curl -fsSL -o install.sh \
+  https://raw.githubusercontent.com/facebookincubator/muse-gadget-sdk/main/linux/install.sh
+less install.sh                                        # 先读一遍
+sudo bash install.sh --sdk-token mgst_… --yes          # 安装官方 SDK
+sudo musegadget pair                                   # 开 10 分钟配对窗口，手机 app 同 A1 操作
+```
+
+**B2. 导出凭证**（在配对机上）
+
+```sh
+sudo cp /var/lib/musegadget/{identity,pairing}.json ~/
+sudo chown $USER ~/identity.json ~/pairing.json
+scp identity.json pairing.json 你@Mac:~/muse-pairing/   # 拷到运行 MCP 的机器
+```
+
+**B3. 部署常驻主机**（在 Mac 上执行，`--dry-run` 可先预览）
+
+```sh
+scripts/provision.sh --host USER@云主机 --sdk-token $(cat ~/.config/muse-agent/sdk_token)
+scripts/import_state.sh ~/muse-pairing --host USER@云主机
+# 看到 systemd active + paired 即成功；之后长期运行全在云主机
+```
+
+**B4. 切换后端**（`~/.config/muse-agent/config.yaml`）
+
+```yaml
+backend: ssh
+host: USER@云主机        # ssh 语法，IPv6 不带方括号
+```
+
+**B5. 验证 + 注册 MCP + 安装 Skill**
+
+```sh
+uv run muse-agent --status      # ready: true 即通；失败先跑 muse_doctor
+```
+
+注册见下方[通用收尾](#3-注册-mcp--安装-skill两条路线相同)。
+
+---
+
+### 3. 注册 MCP + 安装 Skill（两条路线相同）
 
 仓库根已有 `.mcp.json`（打开仓库即被发现）。手动注册到客户端配置：
 
@@ -147,7 +203,7 @@ bun bridge/bridge.mjs status          # 验证：应返回 "paired": true, "read
   "mcpServers": {
     "muse": {
       "command": "uv",
-      "args": ["--directory", "/Users/wanghao/workspace/muse-skill", "run", "muse-agent"]
+      "args": ["--directory", "/path/to/muse-skill", "run", "muse-agent"]
     }
   }
 }
@@ -156,7 +212,7 @@ bun bridge/bridge.mjs status          # 验证：应返回 "paired": true, "read
 Claude Code 一条命令：`claude mcp add muse -- uv --directory /path/to/muse-skill run muse-agent`
 （详见 [docs/claude-code.md](docs/claude-code.md) / [docs/zcode.md](docs/zcode.md)）
 
-### 3. 安装 Skill（可选，让 agent 知道何时、怎么用 Muse）
+安装 Skill（可选，让 agent 知道何时、怎么用 Muse）：
 
 ```sh
 cp -r skills/muse ~/.agents/skills/muse      # Zcode
