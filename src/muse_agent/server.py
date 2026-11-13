@@ -218,7 +218,8 @@ async def muse_get_image_result(
                         "再次调用 muse_get_image_result 查询。详见 docs/auto-approve.md")
     if status == "timeout":
         meta["hint"] = ("Muse 仍在生成/等待上传，任务未丢失：稍后再次调用 "
-                        "muse_get_image_result(task_id) 即可，不会重新生成。")
+                        "muse_get_image_result(task_id) 即可，不会重新生成。"
+                        "若长时间不动，去 Muse app 看是否有待批准的外联卡片。")
 
     for img in task.get("images", []):
         entry = {"label": img.get("label", ""), "url": img.get("url", ""),

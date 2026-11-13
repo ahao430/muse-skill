@@ -71,7 +71,7 @@ MUSE_AGENT_HOST=USER@HOST scripts/import_state.sh ~/muse-pairing
 然后在 `~/.config/muse-agent/config.yaml` 里切换后端：
 
 ```yaml
-backend: ssh        # local（默认，Mac 直连）| ssh（云主机常驻）
+backend: ssh        # local（默认，路线 A 手机配对直连）| ssh（路线 B 云主机常驻）
 host: USER@HOST     # backend: ssh 时使用
 ```
 

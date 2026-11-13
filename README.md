@@ -13,7 +13,7 @@ curl 上传→直链，零审批弹窗）。
 手机彻底退出链路。
 
 ```
-路线 A（Mac 直连，推荐）
+路线 A（手机配对直连 · 社区 muse-client）
   Claude Code / Zcode ──MCP stdio──> muse-agent（本仓库，Mac）
                                         │ backend: local（默认）
                                         ▼
@@ -22,7 +22,7 @@ curl 上传→直链，零审批弹窗）。
                                         ▼
                                      Muse VM
 
-路线 B（Linux 常驻）
+路线 B（Linux SDK 常驻 · 官方 musegadget）
   Claude Code / Zcode ──MCP stdio──> muse-agent（Mac）
                                         │ backend: ssh
                                         ▼
@@ -32,7 +32,7 @@ curl 上传→直链，零审批弹窗）。
                                      Muse VM
 ```
 
-| | 路线 A：local | 路线 B：ssh |
+| | 路线 A：手机配对（local） | 路线 B：Linux SDK（ssh） |
 |---|---|---|
 | 配对 | **Mac 本机**，内置蓝牙，零硬件 | 在任意有 BLE 的 Linux 配对一次（**需要 USB 蓝牙适配器**，或树莓派等自带蓝牙的机器） |
 | 配对之后 | **手机不再需要**（App 可删可离线） | **配对机即可退役**，凭证导入常驻主机后它不再参与 |
@@ -71,19 +71,28 @@ curl 上传→直链，零审批弹窗）。
 
 ### 两种模式的能力差异（授权之外）
 
-| 能力 | local（Mac 直连） | ssh（Linux gadget） |
+| 能力 | 路线 A · 手机配对（local） | 路线 B · Linux SDK（ssh） |
 |---|---|---|
 | 文字聊天 / 流式回复 | ✅ | ✅ |
 | 发送图片（≤2 MiB） | ✅ | ✅ |
-| 收 Muse 生成的图片 | ✅ 原生 ImageContent 内联显示 + 本地落盘（实测） | ❌ 官方 CLI 无媒体通道（可给服务器另装 bridge 解决） |
+| 收 Muse 生成的图片 | ✅ 原生 ImageContent 内联显示 + 本地落盘（实测）；muse.ai 卡片 + COS 直链双通道 | ✅ 从回复文字解析直链（配 COS 中转最稳）；官方 CLI 收不到 presentation 卡片，ImageContent 同样可用 |
 | Muse 执行本机命令（`system.run`/`file.*`） | ❌ 不注册任何命令 | ✅ 以安装账号权限执行，可经 `commands.d` 裁剪 |
 | 语音通话（WAV/实时） | ❌（muse-client 未实现） | ⚠️ SDK 自带 `voice-call` CLI，未接入 MCP 工具 |
 | 24/7 在线收发 | ❌ Mac 睡眠即断 | ✅ systemd 常驻 |
 | 并发 | 单连接按需建立，**避免并发调用**（token 刷新冲突） | 服务端并发上限 4 命令；同一 chat 单等待 |
 | 断连行为 | 链路直接断，无遗留 | **已开始的命令继续跑完**（官方行为） |
 
-两条路线的 MCP 工具面完全一致（8 个工具），切换 `backend`
-不需要改任何调用方式；仅 `muse_get_images` 目前为 local 后端专属。
+两条路线的 MCP 工具面基本一致（11 个工具），切换 `backend`
+不需要改任何调用方式；仅 `muse_notifications` 为路线 A 专属（依赖本地
+bridge 的被动监听）。
+
+**路线 B 画图要走 COS 吗？——强烈建议。** 官方 CLI 只返回回复文本，
+presentation 卡片和审批快照都拿不到：不配 COS 时只能指望 Muse 把
+muse.ai/files 链接贴进回复文字（不稳定，逐文件审批照弹，等待审批在
+CLI 侧表现为超时）；配 COS 后 Muse 上传你的 bucket 并把直链写进回复，
+`muse_start_image_generation` / `muse_get_image_result` 在路线 B 下开箱
+即用（首次仍需在 app 批一次 myqcloud 域名卡）。纯聊天、发图给 Muse
+则不需要 COS。
 
 ### 多设备共享一台服务器
 
@@ -108,8 +117,8 @@ curl 上传→直链，零审批弹窗）。
 
 ## 二、配置步骤
 
-> **选择你的路线**：[🅰 路线 A · Mac 直连](#路线-a--mac-直连默认推荐) ｜
-> [🅱 路线 B · Linux 常驻](#路线-b--linux-常驻)
+> **选择你的路线**：[🅰 路线 A · 手机配对直连](#路线-a--手机配对直连默认推荐) ｜
+> [🅱 路线 B · Linux SDK 常驻](#路线-b--linux-sdk-常驻)
 >
 > 也可以先跑一键向导 `scripts/setup.sh`（覆盖路线 A 全流程，逐项检查可重
 > 跑），或在 agent 里随时调 `muse_doctor` 获取带命令的体检清单。
@@ -133,10 +142,11 @@ echo 'mgst_你的token' > ~/.config/muse-agent/sdk_token && chmod 600 ~/.config/
 
 ---
 
-### 路线 A · Mac 直连（默认，推荐）
+### 路线 A · 手机配对直连（默认，推荐）
 
-> 5 分钟打通。**配对后手机彻底退役**——App 可关、可离线、可卸载（只要
-> 别在 app 里删除这台设备）。
+> 5 分钟打通。**手机只在配对那 2 分钟出场**（Muse app 经蓝牙确认这台
+> 机器），之后彻底退役——App 可关、可离线、可卸载（只要别在 app 里
+> 删除这台设备）。
 
 **A1. 配对（一次性）**
 
@@ -185,7 +195,7 @@ Muse 官方 `muse.ai/files` 转存是**逐文件人工审批**（每张图弹一
 
 ---
 
-### 路线 B · Linux 常驻
+### 路线 B · Linux SDK 常驻
 
 > 24/7 在线。授权在**一台有蓝牙的 Linux** 上做一次（云主机没蓝牙，需插
 > USB 蓝牙适配器；树莓派/笔记本自带即可），凭证导入常驻主机后**配对机
@@ -225,6 +235,9 @@ scripts/import_state.sh ~/muse-pairing --host USER@云主机
 ```yaml
 backend: ssh
 host: USER@云主机        # ssh 语法，IPv6 不带方括号
+
+# 画图建议加 COS 中转（cos_* 三行，配置同路线 A3）：
+# 官方 CLI 只回文本，直链写进回复文字是唯一稳定的取图通道
 ```
 
 **B5. 验证 + 注册 MCP + 安装 Skill**
@@ -315,7 +328,7 @@ uv run muse-agent --status                                    # MCP server 自�
 `~/.config/muse-agent/config.yaml`（全部可选，环境变量 `MUSE_AGENT_*` 优先）：
 
 ```yaml
-backend: local          # local（默认，Mac 直连）| ssh（云主机常驻）
+backend: local          # local（默认，路线 A 手机配对直连）| ssh（路线 B 云主机常驻）
 host: root@example.com  # backend: ssh 时的 gadget 主机
 timeout: 120            # muse_chat 默认等待秒数（上限 600）
 bridge_command: bun     # bridge/bridge.mjs 的运行器（node ≥22.18 也可）

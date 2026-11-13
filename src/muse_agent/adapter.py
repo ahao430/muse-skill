@@ -10,6 +10,7 @@ Sessions (side-chat bookkeeping) are backend-independent local state.
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -28,6 +29,25 @@ _NETWORK_ERROR_MARKERS = (
 def _is_network_error(error: str) -> bool:
     e = error.lower()
     return any(marker in e for marker in _NETWORK_ERROR_MARKERS)
+
+
+def _extract_media_links(text: str, media_domain: str) -> list[dict]:
+    """Harvest public media links Muse pasted into its reply text — the ssh
+    backend's only media channel (the official CLI passes no presentation
+    events). A presigned echo degrades to the same public URL, so it's safe."""
+    if not text:
+        return []
+    domains = [r"muse\.ai/files"]
+    if media_domain:
+        domains.append(re.escape(media_domain))
+    seen: set[str] = set()
+    out: list[dict] = []
+    for url in re.findall(rf"https://(?:{'|'.join(domains)})/[\w./%-]+", text):
+        url = url.rstrip(".")
+        if url not in seen:
+            seen.add(url)
+            out.append({"url": url, "label": "image", "source": "reply-text"})
+    return out
 
 
 @dataclass
@@ -98,12 +118,15 @@ class GadgetAdapter:
                    timeout: int | None = None) -> dict:
         """Generate-and-fetch: ask Muse to produce media and return public links.
 
-        Local backend only — the ssh backend's musegadget CLI has no media
-        collection channel. Returns {"ok", "reply", "images": [{url, label…}]}.
+        Local backend only (one-shot bridge `images` command); on the ssh
+        backend use the task tools instead — they parse links out of Muse's
+        reply text. Returns {"ok", "reply", "images": [{url, label…}]}.
         """
         if self.config.backend != "local":
             return {"ok": False,
-                    "error": "muse_get_images requires backend: local (the ssh backend has no media channel)"}
+                    "error": "one-shot image fetch requires backend: local; "
+                             "on ssh use start_image_task/poll_image_task "
+                             "(links are parsed from the reply text)"}
         session = self._resolve(session_id)
         seconds = min(max(timeout or 240, 30), 600)
         return self.backend.images(prompt, session, seconds)
@@ -114,27 +137,52 @@ class GadgetAdapter:
         """Submit an image-generation request; returns the task record at once.
 
         Does NOT wait for Muse: the MCP call stays fast, results are polled
-        via poll_image_task(). Local backend only.
+        via poll_image_task(). Works on both backends.
         """
-        if self.config.backend != "local":
-            return {"ok": False,
-                    "error": "image generation requires backend: local "
-                             "(the ssh backend's musegadget CLI has no media channel)"}
         session = self._resolve(session_id)
         task = self._tasks.create(prompt, session)
         return {"ok": True, "task": task}
 
+    @staticmethod
+    def _nudge_message(upload: dict | None) -> str:
+        """Re-poll message: ferry media out without ever re-generating."""
+        if upload:
+            return (
+                "把刚才生成的图片用 curl 上传到这个预签名地址（不要重新画）：\n"
+                f"curl -X PUT --data-binary @文件 '{upload['put_url']}'\n"
+                "上传成功后用 Markdown 图片语法回复（不要发裸链接）：\n"
+                f"![图片]({upload['public_url']})"
+            )
+        return ("请把刚才生成图片的 muse.ai/files 文件卡片链接再发一次"
+                "（贴在回复里即可，不要重新上传，不要重新画）。")
+
+    @staticmethod
+    def _first_message_remote(prompt: str, upload: dict | None) -> str:
+        """First send on the ssh backend: the reply text is the only media
+        channel, so the upload slot rides along from the very start."""
+        if upload:
+            return (
+                f"{prompt}\n\n"
+                "画好后，把图片文件用 curl 上传到这个预签名地址：\n"
+                f"curl -X PUT --data-binary @文件 '{upload['put_url']}'\n"
+                "上传成功后用 Markdown 图片语法回复（不要发裸链接）：\n"
+                f"![图片]({upload['public_url']})"
+            )
+        return (f"{prompt}\n\n"
+                "画好后把图片转存为 muse.ai/files 公网链接，并把链接直接贴在"
+                "回复文字里（不要只发卡片）。")
+
     def poll_image_task(self, task_id: str, wait_seconds: int = 90) -> dict:
         """Poll a task: if still pending, wait up to wait_seconds inside the
-        bridge (single long subscribe) and return the freshest state.
+        backend (single long wait) and return the freshest state.
 
         Timeout is a STATE, not an error: the task is kept and re-pollable.
         """
-        if self.config.backend != "local":
-            return {"ok": False, "error": "local backend required"}
         task = self._tasks.get(task_id)
         if task is None:
             return {"ok": False, "error": f"unknown task_id {task_id!r}"}
+        if self.config.backend != "local":
+            return self._poll_image_task_remote(task, wait_seconds)
         if task["status"] == "failed" and not _is_network_error(task.get("error", "")):
             return {"ok": True, "task": task}
         # network-flavored failures (proxy down, TLS reset, DNS rot) are
@@ -148,18 +196,8 @@ class GadgetAdapter:
         # regenerate — they only ferry media out (presigned COS upload when
         # configured, else Muse's own muse.ai/files re-share).
         upload = self._presign_upload()
-        message = task["prompt"]
-        if task.get("sent_prompt"):
-            if upload:
-                message = (
-                    "把刚才生成的图片用 curl 上传到这个预签名地址（不要重新画）：\n"
-                    f"curl -X PUT --data-binary @文件 '{upload['put_url']}'\n"
-                    "上传成功后用 Markdown 图片语法回复（不要发裸链接）：\n"
-                    f"![图片]({upload['public_url']})"
-                )
-            else:
-                message = ("请把刚才生成图片的 muse.ai/files 文件卡片链接再发一次"
-                           "（贴在回复里即可，不要重新上传，不要重新画）。")
+        message = task["prompt"] if not task.get("sent_prompt") \
+            else self._nudge_message(upload)
         self._tasks.update(task_id, sent_prompt=True, status="pending")
         try:
             payload = self.backend.images(message, task["session_id"], wait_seconds,
@@ -198,6 +236,43 @@ class GadgetAdapter:
         if payload.get("reply") and not updates.get("reply"):
             updates["reply"] = payload["reply"]
         self._tasks.update(task_id, **updates)
+        return {"ok": True, "task": self._tasks.get(task_id)}
+
+    def _poll_image_task_remote(self, task: dict, wait_seconds: int) -> dict:
+        """ssh backend: the official CLI returns only the reply text — no
+        presentation events, no approval snapshot. Links Muse pastes into
+        its answer (COS direct link via the zcode-bridge skill, or a
+        muse.ai re-share) are the only media channel; harvest them from the
+        text. Approval waits are invisible here and surface as timeouts."""
+        task_id = task["task_id"]
+        upload = self._presign_upload()
+        message = self._nudge_message(upload) if task.get("sent_prompt") \
+            else self._first_message_remote(task["prompt"], upload)
+        self._tasks.update(task_id, sent_prompt=True, status="pending")
+        try:
+            result = self.chat(message, task["session_id"], wait_seconds)
+        except Exception as exc:  # noqa: BLE001 — transport failure must not lose the task
+            self._tasks.update(task_id, status="timeout", error=f"ssh error: {exc}")
+            return {"ok": True, "task": self._tasks.get(task_id)}
+
+        if not result.ok:
+            if _is_network_error(result.detail):
+                self._tasks.update(task_id, status="timeout", error=result.detail)
+            else:
+                self._tasks.update(task_id, status="failed", error=result.detail)
+            return {"ok": True, "task": self._tasks.get(task_id)}
+        images = _extract_media_links(result.text, self.config.media_domain)
+        if images:
+            self._tasks.add_images(task_id, images)
+            self._tasks.update(task_id, status="completed", reply=result.text)
+        elif not result.text.strip():
+            # CLI exit 3: delivered, no answer yet — still drawing, or blocked
+            # on an approval card we cannot see from here.
+            self._tasks.update(task_id, status="timeout", reply=result.detail)
+        else:
+            # Muse answered without media (clarification, refusal, ...) —
+            # record it; re-polls still absorb a late link, like local.
+            self._tasks.update(task_id, status="completed", reply=result.text)
         return {"ok": True, "task": self._tasks.get(task_id)}
 
     def notifications(self, wait_seconds: int = 8) -> dict:

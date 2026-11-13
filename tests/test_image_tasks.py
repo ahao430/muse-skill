@@ -134,6 +134,94 @@ def test_approval_required_state(adapter, tmp_path):
     assert "Upload a file" in result["task"]["approvals"][0]["action_label"]
 
 
+# ------------------------------------------------ ssh backend: text-link harvest
+
+class FakeSshBackend:
+    """The remote surface: only chat() exists (official CLI couples send+wait)."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.sent = []
+
+    def chat(self, message, session_id, timeout):
+        self.sent.append(message)
+        if not self.replies:
+            return {"ok": True, "reply": "", "detail": "sent, no answer yet"}
+        return self.replies.pop(0)
+
+
+def _ssh_adapter(tmp_path, monkeypatch, replies, cos=True):
+    from muse_agent import tasks as tm
+
+    bridge = tmp_path / "bridge"
+    bridge.mkdir(exist_ok=True)
+    (bridge / "bridge.mjs").write_text("//")
+    monkeypatch.setattr(tm.TaskStore, "_load", lambda self: None)
+    monkeypatch.setattr(tm.TaskStore, "_save", lambda self: None)
+    kwargs = {"backend": "ssh", "host": "h"}
+    if cos:
+        kwargs.update(cos_bucket_domain="muse-t.cos.ap-guangzhou.myqcloud.com",
+                      cos_secret_id="AKIDX", cos_secret_key="K")
+    ad = GadgetAdapter(Config(**kwargs))
+    ad.backend = FakeSshBackend(replies)
+    ad._resolve = lambda s=None: "sess-remote"
+    return ad
+
+
+def test_remote_poll_harvests_cos_link(tmp_path, monkeypatch):
+    ad = _ssh_adapter(tmp_path, monkeypatch, [
+        {"ok": True, "reply": ""},  # CLI exit 3: delivered, no answer yet
+        {"ok": True, "reply": "画好了\n![图片](https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/a/b.webp)"},
+    ])
+    started = ad.start_image_task("画一只猫", None)
+    tid = started["task"]["task_id"]
+    first = ad.poll_image_task(tid, wait_seconds=5)
+    assert first["task"]["status"] == "timeout"
+    assert "curl -X PUT" in ad.backend.sent[0], "first send must carry the upload slot"
+    second = ad.poll_image_task(tid, wait_seconds=5)
+    assert second["task"]["status"] == "completed"
+    assert second["task"]["images"][0]["url"] == \
+        "https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/a/b.webp"
+    assert "不要重新画" in ad.backend.sent[1], "re-poll must nudge, not regenerate"
+
+
+def test_remote_poll_answer_without_media(tmp_path, monkeypatch):
+    ad = _ssh_adapter(tmp_path, monkeypatch, [
+        {"ok": True, "reply": "这张没能画出来，要不要换个温和点的题材？"},
+    ])
+    started = ad.start_image_task("画打架", None)
+    result = ad.poll_image_task(started["task"]["task_id"], wait_seconds=5)
+    assert result["task"]["status"] == "completed"
+    assert result["task"]["images"] == []
+    assert "没能画出来" in result["task"]["reply"]
+
+
+def test_remote_poll_network_error_is_retryable(tmp_path, monkeypatch):
+    ad = _ssh_adapter(tmp_path, monkeypatch, [
+        {"ok": False, "detail": "ssh: connect to host timed out"},
+    ])
+    started = ad.start_image_task("draw", None)
+    tid = started["task"]["task_id"]
+    result = ad.poll_image_task(tid, wait_seconds=5)
+    assert result["task"]["status"] == "timeout", "network errors must stay re-pollable"
+    # recover: next poll succeeds
+    ad.backend.replies.append(
+        {"ok": True, "reply": "![图片](https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/c/d.webp)"})
+    result = ad.poll_image_task(tid, wait_seconds=5)
+    assert result["task"]["status"] == "completed"
+
+
+def test_extract_media_links_dedupe_and_domains():
+    from muse_agent.adapter import _extract_media_links
+    text = ("看这个 https://muse.ai/files/a.webp 和 "
+            "https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/x/y.webp "
+            "同一个 https://muse.ai/files/a.webp 不重复")
+    links = _extract_media_links(text, "muse-t.cos.ap-guangzhou.myqcloud.com")
+    assert [l["url"] for l in links] == [
+        "https://muse.ai/files/a.webp",
+        "https://muse-t.cos.ap-guangzhou.myqcloud.com/muse-media/x/y.webp"]
+
+
 # ------------------------------------------------------- server: ImageContent
 
 def _run(coro):
