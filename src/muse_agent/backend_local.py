@@ -79,14 +79,52 @@ class LocalBackend:
         return self._run(args, timeout=(timeout or 120) + 60)
 
     def doctor(self) -> dict:
-        payload = self.status()
-        return {
-            "ok": True,
-            "report": (
-                "credentials present, connection ok" if payload.get("ready")
-                else "not paired yet — run `bun bridge/bridge.mjs pair` (docs/pairing.md)"
-            ),
-        }
+        """First-use checklist: every component needed for a working chat,
+        in order, with the exact next command for the first missing one."""
+        import shutil
+
+        checks: list[dict] = []
+
+        ok = bool(shutil.which(self.config.bridge_command))
+        checks.append({"check": f"runner '{self.config.bridge_command}' on PATH",
+                       "ok": ok,
+                       "fix": "install bun (curl -fsSL https://bun.sh/install | bash)" if not ok else ""})
+
+        ok = self.script.exists()
+        checks.append({"check": "bridge/bridge.mjs present", "ok": ok,
+                       "fix": "git clone the repo / restore bridge/" if not ok else ""})
+
+        node_modules = self.script.parent / "node_modules" / "muse-client"
+        ok = node_modules.exists()
+        checks.append({"check": "bridge dependencies installed (node_modules/muse-client)",
+                       "ok": ok,
+                       "fix": "cd bridge && bun install" if not ok else ""})
+
+        creds_dir = Path(self.config.credentials_dir) if self.config.credentials_dir else \
+            Path.home() / "Library" / "Application Support" / "MuseGadgetPair"
+        paired = any((creds_dir / name).exists() for name in ("pairing.json", "credentials.json"))
+        token = (Path.home() / ".config" / "muse-agent" / "sdk_token").exists()
+        checks.append({"check": "paired with Muse (credentials present)",
+                       "ok": paired,
+                       "fix": ("run `bun bridge/bridge.mjs pair` (docs/pairing.md)"
+                               if token else
+                               "save your SDK token to ~/.config/muse-agent/sdk_token, "
+                               "then run `bun bridge/bridge.mjs pair`")})
+
+        connection: dict | None = None
+        if paired and checks[0]["ok"] and checks[1]["ok"] and checks[2]["ok"]:
+            try:
+                connection = self.status()
+                checks.append({"check": "connection to Muse VM", "ok": bool(connection.get("ready")),
+                               "fix": "" if connection.get("ready") else str(connection.get("error", "connection failed"))})
+            except LocalBackendError as exc:
+                checks.append({"check": "connection to Muse VM", "ok": False, "fix": str(exc)})
+
+        all_ok = all(c["ok"] for c in checks)
+        return {"ok": all_ok,
+                "ready": bool(connection and connection.get("ready")),
+                "checks": checks,
+                "next": next((c["fix"] for c in checks if not c["ok"]), "")}
 
     def _session(self, session_id: str | None) -> list[str]:
         return ["--session", session_id] if session_id else []

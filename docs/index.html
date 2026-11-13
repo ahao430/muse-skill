@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Muse Agent Skill — 把 Muse 接入你的编程 Agent</title>
+<meta name="description" content="通过 MCP 和 Agent Skills 把 Meta Muse 接入 Claude Code / Zcode 等编程 agent：发消息、收回答、发图片，全链路本地，无公网服务器。">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #7ee787; --accent2: #79c0ff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, "PingFang SC", "Segoe UI", sans-serif; line-height: 1.6; }
+  a { color: var(--accent2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 72px 0 48px; text-align: center; background: radial-gradient(ellipse at top, #1b2735 0%, var(--bg) 60%); }
+  h1 { font-size: 2.6rem; letter-spacing: -0.02em; }
+  h1 .muse { color: var(--accent); }
+  .tagline { color: var(--muted); font-size: 1.15rem; margin: 14px 0 28px; }
+  .badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .badge { border: 1px solid var(--border); background: var(--panel); border-radius: 999px; padding: 4px 14px; font-size: .85rem; color: var(--muted); }
+  .badge b { color: var(--accent); font-weight: 600; }
+  .cta { margin-top: 28px; display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn { display: inline-block; padding: 10px 22px; border-radius: 8px; font-weight: 600; border: 1px solid var(--border); }
+  .btn.primary { background: var(--accent); color: #0d1117; border-color: transparent; }
+  section { padding: 44px 0; border-top: 1px solid var(--border); }
+  h2 { font-size: 1.5rem; margin-bottom: 20px; }
+  h3 { font-size: 1.05rem; margin: 18px 0 8px; color: var(--accent2); }
+  p.lead { color: var(--muted); max-width: 720px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+  .card .route { font-size: 1.15rem; font-weight: 700; margin-bottom: 6px; }
+  .card .route span { font-size: .8rem; font-weight: 600; border-radius: 6px; padding: 2px 8px; margin-left: 8px; vertical-align: middle; }
+  .rec { background: rgba(126,231,135,.12); color: var(--accent); }
+  .opt { background: rgba(121,192,255,.12); color: var(--accent2); }
+  .card p { color: var(--muted); font-size: .95rem; }
+  pre { background: #0a0d12; border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: .85rem; margin: 12px 0; }
+  code, pre { font-family: "SF Mono", ui-monospace, Menlo, monospace; }
+  code { background: var(--panel); border-radius: 5px; padding: 1px 6px; font-size: .9em; }
+  pre code { background: none; padding: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  td:first-child { color: var(--text); }
+  .arch { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; font-family: ui-monospace, monospace; font-size: .82rem; color: var(--muted); white-space: pre; overflow-x: auto; }
+  .arch b { color: var(--accent); }
+  ol.steps { padding-left: 22px; } ol.steps li { margin: 10px 0; }
+  footer { padding: 32px 0 48px; text-align: center; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--border); }
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <h1><span class="muse">Muse</span> Agent Skill</h1>
+  <p class="tagline">把 Meta 的 Muse 接入 Claude Code / Zcode 等编程 Agent<br>发消息 · 收回答 · 发图片 · 跨 Agent 协作 —— 全链路本地，无公网服务器</p>
+  <div class="badges">
+    <span class="badge"><b>✓ 端到端验证</b> 文字 / 新会话 / 图片</span>
+    <span class="badge">MCP + Agent Skills</span>
+    <span class="badge">双后端 local / ssh</span>
+    <span class="badge">一次配对 · 零硬件</span>
+  </div>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/ahao430/muse-skill#readme">GitHub 仓库</a>
+    <a class="btn" href="https://github.com/ahao430/muse-skill/blob/main/docs/pairing.md">配对指南</a>
+    <a class="btn" href="https://github.com/ahao430/muse-skill/blob/main/skills/muse/SKILL.md">SKILL.md</a>
+  </div>
+</header>
+
+<section class="wrap">
+  <h2>架构</h2>
+  <div class="arch">Claude Code / Zcode ── MCP stdio ──> <b>muse-agent</b>（本仓库）
+                                        │
+                       backend: <b>local</b>（默认，Mac 直连）    backend: ssh（可选，Linux 常驻）
+                                        │                              │
+                    <b>muse-client</b>（TS，Mac 内置蓝牙配对一次）   <b>musegadget</b> systemd（官方 Linux SDK）
+                                        │                              │
+                                        └──────── WSS + Noise 加密会话 ────────┘
+                                                       │
+                                                    <b>Muse VM</b></div>
+  <p class="lead" style="margin-top:14px">蓝牙只在配对那一刻用一次，之后手机彻底退出链路；Mac 凭保存的设备凭证直接与 Muse 云端 VM 建立加密会话。</p>
+</section>
+
+<section class="wrap">
+  <h2>两条路线，同一套工具</h2>
+  <div class="cols">
+    <div class="card">
+      <div class="route">路线 A · Mac 直连 <span class="rec">推荐 · 已验证</span></div>
+      <p>社区 <a href="https://github.com/wong2/muse-client">muse-client</a>（官方协议 TS 移植），Mac 内置蓝牙配对，零额外硬件。按需连接，5 分钟打通。不注册任何本机命令，Muse 只能和你聊天。</p>
+    </div>
+    <div class="card">
+      <div class="route">路线 B · Linux 常驻 <span class="opt">24/7</span></div>
+      <p>官方 <a href="https://github.com/facebookincubator/muse-gadget-sdk">muse-gadget-sdk</a> 跑在云主机/树莓派，systemd 常驻。Muse 可获得 <code>system.run</code>/<code>file.*</code> 远端命令能力（可裁剪）。Mac 关机也能收发。</p>
+    </div>
+  </div>
+  <p class="lead" style="margin-top:16px">切换 <code>backend: local | ssh</code> 一行配置，MCP 工具面完全一致。</p>
+</section>
+
+<section class="wrap">
+  <h2>快速开始</h2>
+  <ol class="steps">
+    <li>克隆仓库并跑向导：<code>git clone https://github.com/ahao430/muse-skill &amp;&amp; cd muse-skill &amp;&amp; scripts/setup.sh</code>（依赖 → token → 配对 → 验证，逐项引导）</li>
+    <li>没有 token？先到 <a href="https://gadgets.muse.ai/settings/sdk-tokens">gadgets.muse.ai</a> → Account → SDK tokens 生成 <code>mgst_…</code></li>
+    <li>手机 Muse app：Settings → Devices → Developer mode → Add Device，选终端显示的 <code>MuseGadgetXXXXXX</code></li>
+    <li>注册 MCP：<code>claude mcp add muse -- uv --directory …/muse-skill run muse-agent</code>（或把 <code>.mcp.json</code> 加进 Zcode 配置）</li>
+    <li>对 agent 说：「问一下 Muse ……」</li>
+  </ol>
+</section>
+
+<section class="wrap">
+  <h2>MCP 工具</h2>
+  <table>
+    <tr><th>工具</th><th>用途</th></tr>
+    <tr><td><code>muse_status</code></td><td>连接体检：是否配对、VM 是否就绪（会话首调）</td></tr>
+    <tr><td><code>muse_chat</code></td><td>发消息并等待完整回答（1–600s；超时≠失败，消息已送达）</td></tr>
+    <tr><td><code>muse_send</code></td><td>发后即走，不等回复</td></tr>
+    <tr><td><code>muse_send_image</code></td><td>发图片（≤2 MiB，JPEG/PNG/GIF/WebP）+ 文字，可等待回答</td></tr>
+    <tr><td><code>muse_doctor</code></td><td>逐项体检清单，每项缺失给出确切下一步命令</td></tr>
+    <tr><td><code>muse_sessions</code></td><td>创建/列出 agent 专属 side chat</td></tr>
+    <tr><td><code>muse_wait</code></td><td>协议限制不支持独立等待，明确报错指路 muse_chat</td></tr>
+  </table>
+</section>
+
+<section class="wrap">
+  <h2>设计要点</h2>
+  <div class="cols">
+    <div class="card"><h3>Agent 专属会话</h3><p>主聊天的程序化回复无法证明归属会被协议丢弃——agent 自动使用持久 side chat（UUID），永不串线、不污染你的主聊天。</p></div>
+    <div class="card"><h3>诚实的失败</h3><p>超时返回「已送达但未答完」而非错误；不支持的等待能力明确报错指路，不假装可用；未配对/断网都有带命令的引导。</p></div>
+    <div class="card"><h3>凭证最小化</h3><p>SDK token 与配对凭证只存在本机，.gitignore 兜底；setup.sh 里粘贴 token 不回显、不进终端历史。</p></div>
+    <div class="card"><h3>23 项单测 + CI</h3><p>SSH/local 双后端全部 mock 化测试，无网络依赖；GitHub Actions 跑 pytest 与脚本语法检查。</p></div>
+  </div>
+</section>
+
+<footer class="wrap">
+  由 <a href="https://github.com/ahao430">ahao430</a> 构建 · Apache-2.0 ·
+  基于 <a href="https://github.com/facebookincubator/muse-gadget-sdk">muse-gadget-sdk</a> 与
+  <a href="https://github.com/wong2/muse-client">muse-client</a> ·
+  <a href="https://github.com/ahao430/muse-skill">GitHub</a>
+</footer>
+
+</body>
+</html>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 from mcp.server.fastmcp import FastMCP
@@ -10,6 +11,10 @@ from .adapter import GadgetAdapter, MuseUnavailable, NotPaired
 
 mcp = FastMCP("muse-agent")
 _adapter = GadgetAdapter()
+
+# Blocking calls (subprocess, ssh) must not stall the stdio event loop.
+async def _call(fn, *args):
+    return await asyncio.to_thread(fn, *args)
 
 
 def _adapter_error_text(exc: Exception) -> str:
@@ -22,9 +27,7 @@ def _adapter_error_text(exc: Exception) -> str:
         if _adapter.config.backend == "local":
             return (
                 f"The local Muse backend failed: {exc}. "
-                "Check that bun and bridge/node_modules are installed "
-                "(cd bridge && bun install), and that pairing is done "
-                "(bun bridge/bridge.mjs pair)."
+                "Run `muse_doctor` for a component-by-component checklist."
             )
         return (
             f"Cannot reach the Muse gadget host: {exc}. "
@@ -41,7 +44,7 @@ async def muse_status() -> dict:
     Use this first to verify the gadget host is reachable and paired.
     """
     try:
-        return _adapter.status()
+        return await _call(_adapter.status)
     except (MuseUnavailable, NotPaired) as exc:
         return {"ready": False, "error": _adapter_error_text(exc)}
 
@@ -54,7 +57,7 @@ async def muse_send(message: str, session_id: str | None = None) -> dict:
     appears in the Muse chat; use muse_chat when you need the answer.
     """
     try:
-        result = _adapter.send(message, session_id)
+        result = await _call(_adapter.send, message, session_id)
     except (MuseUnavailable, NotPaired) as exc:
         return {"ok": False, "error": _adapter_error_text(exc)}
     return {"ok": result.ok, "detail": result.detail}
@@ -75,7 +78,7 @@ async def muse_chat(
     assuming failure.
     """
     try:
-        result = _adapter.chat(message, session_id, timeout)
+        result = await _call(_adapter.chat, message, session_id, timeout)
     except (MuseUnavailable, NotPaired) as exc:
         return {"ok": False, "error": _adapter_error_text(exc)}
     return {"ok": result.ok, "reply": result.text, "detail": result.detail}
@@ -95,7 +98,7 @@ async def muse_send_image(
     Muse's answer like muse_chat.
     """
     try:
-        result = _adapter.send_image(image_path, message, session_id, timeout)
+        result = await _call(_adapter.send_image, image_path, message, session_id, timeout)
     except (MuseUnavailable, NotPaired) as exc:
         return {"ok": False, "error": _adapter_error_text(exc)}
     return {"ok": result.ok, "reply": result.text, "detail": result.detail}
@@ -103,13 +106,15 @@ async def muse_send_image(
 
 @mcp.tool()
 async def muse_doctor() -> dict:
-    """Run the official musegadget doctor on the gadget host.
+    """Diagnose the Muse setup and return a first-use checklist.
 
-    Use when muse_status reports problems: it checks setup (pairing state,
-    service health, connectivity) and suggests fixes.
+    Local backend: checks runner, bridge script, dependencies, pairing
+    credentials and the live connection, each with the exact next command
+    for the first missing piece. SSH backend: runs the official
+    `musegadget doctor` on the gadget host. Use when anything is broken.
     """
     try:
-        return _adapter.doctor()
+        return await _call(_adapter.doctor)
     except (MuseUnavailable, NotPaired) as exc:
         return {"ok": False, "error": _adapter_error_text(exc)}
 

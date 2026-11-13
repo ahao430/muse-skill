@@ -75,7 +75,7 @@ async def test_status_local_backend_hint(fake_adapter):
     fake_adapter.fail_with = MuseUnavailable("bun not found")
     result = await server.muse_status()
     assert result["ready"] is False
-    assert "bun install" in result["error"]
+    assert "muse_doctor" in result["error"]
 
 
 async def test_chat_returns_reply(fake_adapter):
