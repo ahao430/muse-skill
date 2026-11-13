@@ -54,6 +54,8 @@ Claude Code / Zcode ──MCP stdio──> muse-agent (this repo, Mac)
 | `muse_status` | gadget host reachable? paired? service active? |
 | `muse_send` | fire-and-forget message to Muse |
 | `muse_chat` | send + wait for Muse's answer (1–600 s) |
+| `muse_send_image` | send a picture (≤2 MiB, JPEG/PNG/GIF/WebP) + optional text |
+| `muse_doctor` | official musegadget doctor, for troubleshooting |
 | `muse_wait` | not supported by remote CLI (kept as explicit error) |
 | `muse_sessions` | create/list agent side chats |
 

@@ -95,6 +95,66 @@ class GadgetAdapter:
 
     # -- sessions -----------------------------------------------------------
 
+    def send_image(self, image_path: str, message: str = "",
+                   session_id: str | None = None, timeout: int | None = None) -> SendResult:
+        """Send a picture (<= 2 MiB, JPEG/PNG/GIF/WebP) to Muse, with text.
+
+        The remote CLI reads the file on the gadget host, so the image is
+        scp'd there first (to a per-call temp file, removed after).
+        """
+        import os
+        import subprocess
+
+        path = os.path.expanduser(image_path)
+        if not os.path.isfile(path):
+            return SendResult(ok=False, detail=f"no such file: {path}")
+        if os.path.getsize(path) > 2 * 1024 * 1024:
+            return SendResult(ok=False, detail="image exceeds the 2 MiB limit")
+        ext = os.path.splitext(path)[1].lower().lstrip(".")
+        if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
+            return SendResult(ok=False, detail=f"unsupported type .{ext} (JPEG/PNG/GIF/WebP only)")
+
+        remote_file = f"/tmp/muse-agent-img-{uuid.uuid4().hex[:8]}.{ext}"
+        scp_cmd = [
+            "scp", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={self.config.connect_timeout}",
+            path, f"{self.config.host}:{remote_file}",
+        ]
+        proc = subprocess.run(scp_cmd, capture_output=True, text=True,
+                              timeout=self.config.connect_timeout + 60)
+        if proc.returncode != 0:
+            return SendResult(ok=False, detail=f"scp failed: {(proc.stderr or '').strip()}")
+        try:
+            args = ["musegadget", "send-user-msg", "-", "--image", remote_file]
+            if timeout:
+                args += ["--wait", str(min(max(timeout, 1), MAX_WAIT))]
+            if session_id:
+                args += ["--session-id", session_id]
+            try:
+                out = run_ssh(
+                    self.config.host, args,
+                    timeout=(timeout or 60) + 60,
+                    connect_timeout=self.config.connect_timeout,
+                    stdin_text=message,
+                )
+            except SSHError as exc:
+                if exc.returncode == 3:
+                    return SendResult(ok=True, detail=str(exc))
+                return SendResult(ok=False, detail=str(exc))
+            return SendResult(ok=True, text=out.strip())
+        finally:
+            subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", self.config.host, "--", "rm", "-f", remote_file],
+                capture_output=True, timeout=30,
+            )
+
+    def doctor(self) -> dict:
+        """Run the official `musegadget doctor` on the gadget host."""
+        try:
+            out = self._run(["musegadget", "doctor"], timeout=60)
+        except (MuseUnavailable, NotPaired) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "report": out.strip()}
+
     def new_session(self, label: str = "") -> str:
         session_id = f"muse-agent-{uuid.uuid4().hex[:12]}"
         sessions = cfg.load_sessions()

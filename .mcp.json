@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "muse": {
+      "command": "uv",
+      "args": ["--directory", "${workspaceFolder}", "run", "muse-agent"]
+    }
+  }
+}

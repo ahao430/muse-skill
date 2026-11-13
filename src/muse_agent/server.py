@@ -76,6 +76,39 @@ async def muse_chat(
 
 
 @mcp.tool()
+async def muse_send_image(
+    image_path: str,
+    message: str = "",
+    session_id: str | None = None,
+    timeout: int | None = None,
+) -> dict:
+    """Send a picture to Muse (with optional text) and optionally wait.
+
+    image_path is a local file (JPEG/PNG/GIF/WebP, max 2 MiB); it is copied
+    to the gadget host and sent through Muse. Pass timeout to wait for
+    Muse's answer like muse_chat.
+    """
+    try:
+        result = _adapter.send_image(image_path, message, session_id, timeout)
+    except (MuseUnavailable, NotPaired) as exc:
+        return {"ok": False, "error": _adapter_error_text(exc)}
+    return {"ok": result.ok, "reply": result.text, "detail": result.detail}
+
+
+@mcp.tool()
+async def muse_doctor() -> dict:
+    """Run the official musegadget doctor on the gadget host.
+
+    Use when muse_status reports problems: it checks setup (pairing state,
+    service health, connectivity) and suggests fixes.
+    """
+    try:
+        return _adapter.doctor()
+    except (MuseUnavailable, NotPaired) as exc:
+        return {"ok": False, "error": _adapter_error_text(exc)}
+
+
+@mcp.tool()
 async def muse_wait(session_id: str, timeout: int | None = None) -> dict:
     """Not supported by the remote Muse CLI, which couples send+wait.
 

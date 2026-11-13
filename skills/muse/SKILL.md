@@ -16,6 +16,8 @@ the `muse` MCP server.
 | `muse_status` | First call of a session: verify host reachable + paired |
 | `muse_chat(message, session_id?, timeout?)` | Ask Muse something and get its answer |
 | `muse_send(message, session_id?)` | Notify Muse without waiting (fire-and-forget) |
+| `muse_send_image(image_path, message?, …)` | Show Muse a picture (≤2 MiB, JPEG/PNG/GIF/WebP) |
+| `muse_doctor()` | When status looks broken: official setup health check |
 | `muse_sessions(label?)` | Create/list agent side chats |
 
 ## How to use
