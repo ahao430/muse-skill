@@ -1,0 +1,8 @@
+{
+  "name": "muse-bridge",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "muse-client": "0.4.0"
+  }
+}

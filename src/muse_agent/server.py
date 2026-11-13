@@ -15,11 +15,17 @@ _adapter = GadgetAdapter()
 def _adapter_error_text(exc: Exception) -> str:
     if isinstance(exc, NotPaired):
         return (
-            f"Muse gadget host is not paired yet: {exc}. "
-            "Complete the one-time BLE pairing described in docs/pairing.md, "
-            "then run scripts/import_state.sh."
+            f"Muse is not paired yet: {exc}. "
+            "Complete the one-time BLE pairing described in docs/pairing.md."
         )
     if isinstance(exc, MuseUnavailable):
+        if _adapter.config.backend == "local":
+            return (
+                f"The local Muse backend failed: {exc}. "
+                "Check that bun and bridge/node_modules are installed "
+                "(cd bridge && bun install), and that pairing is done "
+                "(bun bridge/bridge.mjs pair)."
+            )
         return (
             f"Cannot reach the Muse gadget host: {exc}. "
             "Check SSH access and that the musegadget service is running "

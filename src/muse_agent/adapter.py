@@ -1,10 +1,10 @@
-"""GadgetAdapter: talk to the remote musegadget service over SSH.
+"""GadgetAdapter: one API over two backends.
 
-Remote surface (official SDK CLI):
-  musegadget info                                   identity + pairing state
-  musegadget doctor                                 setup health check
-  musegadget send-user-msg - --session-id S --wait N  message via stdin, optional wait
-    exit 0: answer on stdout; exit 3: sent but no/partial answer; exit 1: not delivered.
+- "local": muse-client (TypeScript) on this machine, via bridge/bridge.mjs —
+  pairing and chat both run locally on macOS (recommended).
+- "ssh": the official musegadget service on an always-on Linux gadget host.
+
+Sessions (side-chat bookkeeping) are backend-independent local state.
 """
 
 from __future__ import annotations
@@ -13,17 +13,9 @@ import uuid
 from dataclasses import dataclass
 
 from . import config as cfg
-from .ssh import SSHError, run_ssh
+from .backend_ssh import MuseUnavailable, NotPaired  # re-exported for server
 
-MAX_WAIT = 600  # official SDK cap for --wait
-
-
-class MuseUnavailable(RuntimeError):
-    """The remote gadget host or musegadget service is not usable."""
-
-
-class NotPaired(RuntimeError):
-    """The gadget host has no pairing yet; see docs/pairing.md."""
+MAX_WAIT = 600
 
 
 @dataclass
@@ -33,127 +25,64 @@ class SendResult:
     detail: str = ""
 
 
+def _to_send_result(payload: dict) -> SendResult:
+    if payload.get("ok") and payload.get("error"):
+        payload = {"ok": False, "detail": payload["error"]}
+    return SendResult(
+        ok=bool(payload.get("ok")),
+        text=str(payload.get("reply", "")),
+        detail=str(payload.get("detail", "") or payload.get("error", "")),
+    )
+
+
 class GadgetAdapter:
     def __init__(self, config: cfg.Config | None = None):
         self.config = config or cfg.load_config()
+        if self.config.backend == "ssh":
+            from .backend_ssh import SshBackend
+            self.backend = SshBackend(self.config)
+        else:
+            from .backend_local import LocalBackend, LocalBackendError
+            try:
+                self.backend = LocalBackend(self.config)
+            except LocalBackendError as exc:
+                raise MuseUnavailable(str(exc)) from exc
 
     # -- status -----------------------------------------------------------
 
     def status(self) -> dict:
-        out = self._run(["musegadget", "info"], timeout=20)
-        info = self._parse_info(out)
-        try:
-            svc = self._run(
-                ["systemctl", "is-active", "musegadget"], timeout=15
-            ).strip()
-        except SSHError:
-            svc = "unknown"
-        paired = info.get("paired") is True
-        return {
-            "host": self.config.host,
-            "service": svc,
-            "paired": paired,
-            "identity": info,
-            "ready": paired and svc in ("active", "unknown"),
-        }
+        status = dict(self.backend.status())
+        status["backend"] = self.config.backend
+        if not status.get("ready"):
+            status["hint"] = (
+                "pair on this Mac: `bun bridge/bridge.mjs pair` (docs/pairing.md)"
+                if self.config.backend == "local"
+                else "check the gadget host / docs/pairing.md"
+            )
+        return status
 
     # -- messaging ----------------------------------------------------------
 
     def send(self, message: str, session_id: str | None = None) -> SendResult:
-        """Fire-and-forget send. Returns delivery status only."""
-        args = ["musegadget", "send-user-msg", "-"]
-        if session_id:
-            args += ["--session-id", session_id]
-        try:
-            run_ssh(
-                self.config.host, args,
-                timeout=60, connect_timeout=self.config.connect_timeout,
-                stdin_text=message,
-            )
-        except SSHError as exc:
-            if exc.returncode == 3:
-                return SendResult(ok=True, detail="sent, but no answer was available")
-            return SendResult(ok=False, detail=str(exc))
-        return SendResult(ok=True, detail="sent to Muse")
-
-    def wait(self, session_id: str, timeout: int | None = None) -> SendResult:
-        """Wait for the next answer in a chat without sending anything.
-
-        The remote CLI couples send+wait into one call, so a standalone wait
-        cannot be forwarded faithfully; we surface that instead of pretending.
-        Use chat() for send-and-wait.
-        """
-        raise NotImplementedError(
-            "the remote CLI only supports send+wait in one call; use muse_chat"
-        )
+        return _to_send_result(self.backend.send(message, session_id))
 
     def chat(self, message: str, session_id: str | None = None,
              timeout: int | None = None) -> SendResult:
-        """Send and wait for Muse's full answer."""
         seconds = min(max(timeout or self.config.timeout, 1), MAX_WAIT)
-        return self._send_wait(message, session_id, seconds)
+        return _to_send_result(self.backend.chat(message, session_id, seconds))
 
-    # -- sessions -----------------------------------------------------------
+    def wait(self, session_id: str, timeout: int | None = None) -> SendResult:
+        """Not supported: both backends couple send+wait in one call."""
+        raise NotImplementedError("standalone wait is unsupported; use muse_chat")
 
     def send_image(self, image_path: str, message: str = "",
                    session_id: str | None = None, timeout: int | None = None) -> SendResult:
-        """Send a picture (<= 2 MiB, JPEG/PNG/GIF/WebP) to Muse, with text.
-
-        The remote CLI reads the file on the gadget host, so the image is
-        scp'd there first (to a per-call temp file, removed after).
-        """
-        import os
-        import subprocess
-
-        path = os.path.expanduser(image_path)
-        if not os.path.isfile(path):
-            return SendResult(ok=False, detail=f"no such file: {path}")
-        if os.path.getsize(path) > 2 * 1024 * 1024:
-            return SendResult(ok=False, detail="image exceeds the 2 MiB limit")
-        ext = os.path.splitext(path)[1].lower().lstrip(".")
-        if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
-            return SendResult(ok=False, detail=f"unsupported type .{ext} (JPEG/PNG/GIF/WebP only)")
-
-        remote_file = f"/tmp/muse-agent-img-{uuid.uuid4().hex[:8]}.{ext}"
-        scp_cmd = [
-            "scp", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={self.config.connect_timeout}",
-            path, f"{self.config.host}:{remote_file}",
-        ]
-        proc = subprocess.run(scp_cmd, capture_output=True, text=True,
-                              timeout=self.config.connect_timeout + 60)
-        if proc.returncode != 0:
-            return SendResult(ok=False, detail=f"scp failed: {(proc.stderr or '').strip()}")
-        try:
-            args = ["musegadget", "send-user-msg", "-", "--image", remote_file]
-            if timeout:
-                args += ["--wait", str(min(max(timeout, 1), MAX_WAIT))]
-            if session_id:
-                args += ["--session-id", session_id]
-            try:
-                out = run_ssh(
-                    self.config.host, args,
-                    timeout=(timeout or 60) + 60,
-                    connect_timeout=self.config.connect_timeout,
-                    stdin_text=message,
-                )
-            except SSHError as exc:
-                if exc.returncode == 3:
-                    return SendResult(ok=True, detail=str(exc))
-                return SendResult(ok=False, detail=str(exc))
-            return SendResult(ok=True, text=out.strip())
-        finally:
-            subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", self.config.host, "--", "rm", "-f", remote_file],
-                capture_output=True, timeout=30,
-            )
+        return _to_send_result(self.backend.send_image(image_path, message, session_id, timeout))
 
     def doctor(self) -> dict:
-        """Run the official `musegadget doctor` on the gadget host."""
-        try:
-            out = self._run(["musegadget", "doctor"], timeout=60)
-        except (MuseUnavailable, NotPaired) as exc:
-            return {"ok": False, "error": str(exc)}
-        return {"ok": True, "report": out.strip()}
+        return self.backend.doctor()
+
+    # -- sessions -----------------------------------------------------------
 
     def new_session(self, label: str = "") -> str:
         session_id = f"muse-agent-{uuid.uuid4().hex[:12]}"
@@ -165,55 +94,3 @@ class GadgetAdapter:
     def list_sessions(self) -> list[dict]:
         sessions = cfg.load_sessions()
         return [{"session_id": sid, **meta} for sid, meta in sessions.items()]
-
-    def _send_wait(self, message: str, session_id: str | None, seconds: int) -> SendResult:
-        args = ["musegadget", "send-user-msg", "-", "--wait", str(seconds)]
-        if session_id:
-            args += ["--session-id", session_id]
-        try:
-            out = run_ssh(
-                self.config.host, args,
-                timeout=seconds + 60, connect_timeout=self.config.connect_timeout,
-                stdin_text=message,
-            )
-        except SSHError as exc:
-            if exc.returncode == 3:
-                # Sent, but no (complete) answer. stderr detail is folded into
-                # the SSHError message; surface it as a partial result.
-                return SendResult(ok=True, detail=str(exc))
-            return SendResult(ok=False, detail=str(exc))
-        return SendResult(ok=True, text=out.strip())
-
-    def _wait_poll(self, session_id: str, seconds: int) -> SendResult:
-        raise NotImplementedError(
-            "standalone wait is not supported by the remote CLI; use muse_chat"
-        )
-
-    def _run(self, remote_args: list[str], timeout: int) -> str:
-        try:
-            return run_ssh(
-                self.config.host, remote_args,
-                timeout=timeout, connect_timeout=self.config.connect_timeout,
-            )
-        except SSHError as exc:
-            msg = str(exc)
-            if "Not paired" in msg or "not paired" in msg:
-                raise NotPaired(
-                    "gadget host is not paired yet — follow docs/pairing.md"
-                ) from exc
-            raise MuseUnavailable(msg) from exc
-
-    @staticmethod
-    def _parse_info(text: str) -> dict:
-        """Parse `musegadget info` key/value output into a dict."""
-        info: dict = {}
-        for line in text.splitlines():
-            if ":" not in line:
-                continue
-            key, _, value = line.partition(":")
-            key, value = key.strip().lower().replace(" ", "_"), value.strip()
-            if key == "paired":
-                info["paired"] = value.lower() in ("yes", "true", "paired")
-            elif key:
-                info[key] = value
-        return info

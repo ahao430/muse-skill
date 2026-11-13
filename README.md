@@ -1,90 +1,91 @@
 # Muse Agent Skill
 
 Connect [Muse](https://muse.ai) to coding agents (Claude Code, Zcode, …)
-through **MCP** and **Agent Skills**. Ask Muse questions, get answers, and run
-cross-agent workflows — no public server, everything local.
+through **MCP** and **Agent Skills**. Ask Muse questions, get answers, send
+images, and run cross-agent workflows — everything local, no public server.
 
 ```
 Claude Code / Zcode ──MCP stdio──> muse-agent (this repo, Mac)
-                                       │ SSH
+                                       │ backend: local (default)
                                        ▼
-                       musegadget 服务 (常驻 Linux gadget 主机)
+                    muse-client (TypeScript, macOS BLE pairing)
                                        │ WSS + Noise
                                        ▼
                                     Muse VM
 ```
+
+Optional `ssh` backend runs the official musegadget service on an always-on
+Linux host instead (for 24/7 availability) — see
+[docs/pairing.md](docs/pairing.md#方式二可选后端linux-gadget-主机).
 
 ## Quick start
 
 0. **Sanity check** (any time, no Muse needed):
 
    ```sh
-   uv sync
-   uv run pytest          # unit tests, no network
-   uv run muse-agent --status   # gadget host reachability + pairing state
+   uv sync && uv run pytest
+   (cd bridge && bun install)
+   bun bridge/bridge.mjs status        # → {"paired": false, ...}
    ```
 
-1. **Provision the gadget host** (once):
+1. **Pair once on this Mac** (internal Bluetooth, no extra hardware):
+   [docs/pairing.md](docs/pairing.md) 方式一 —
 
    ```sh
-   scripts/provision.sh --host USER@HOST --sdk-token mgst_…   # --dry-run to preview
+   export MUSE_SDK_TOKEN=mgst_…        # gadgets.muse.ai
+   bun bridge/bridge.mjs pair          # phone app: Developer mode → Add Device
    ```
 
-2. **Pair once over BLE** — needs any BLE-capable Linux + the Muse phone app.
-   Full guide: [docs/pairing.md](docs/pairing.md). Then import the pairing:
-
-   ```sh
-   scripts/import_state.sh ~/muse-pairing --host USER@HOST
-   ```
-
-   If Muse does not answer within the timeout, the message was still
-   delivered — retry `muse_chat` with a longer timeout rather than assuming
-   failure (see SKILL.md).
-
-3. **Register the MCP server** in your agent client:
+2. **Register the MCP server** in your agent client:
    [Claude Code](docs/claude-code.md) · [Zcode](docs/zcode.md)
 
-4. **Install the skill** (optional but recommended): copy `skills/muse/` into
+3. **Install the skill** (optional but recommended): copy `skills/muse/` into
    your agent's skills directory.
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
-| `muse_status` | gadget host reachable? paired? service active? |
+| `muse_status` | paired? connected? (first call of a session) |
 | `muse_send` | fire-and-forget message to Muse |
 | `muse_chat` | send + wait for Muse's answer (1–600 s) |
 | `muse_send_image` | send a picture (≤2 MiB, JPEG/PNG/GIF/WebP) + optional text |
-| `muse_doctor` | official musegadget doctor, for troubleshooting |
-| `muse_wait` | not supported by remote CLI (kept as explicit error) |
+| `muse_doctor` | troubleshooting (backend health check) |
+| `muse_wait` | not supported by Muse's protocol (kept as explicit error) |
 | `muse_sessions` | create/list agent side chats |
+
+If Muse does not answer within the timeout, the message **was still
+delivered** — retry `muse_chat` with a longer timeout rather than assuming
+failure (see SKILL.md).
 
 ## Configuration
 
 `~/.config/muse-agent/config.yaml` (all optional):
 
 ```yaml
-host: root@example.com      # gadget host; env MUSE_AGENT_HOST overrides
-timeout: 120                # default muse_chat wait seconds
-connect_timeout: 10
+backend: local        # local (default) | ssh
+host: root@example.com  # gadget host; backend: ssh only
+timeout: 120            # default muse_chat wait seconds
+# bridge_command: bun  # runner for bridge/bridge.mjs
+# credentials_dir: …   # muse-client credentials dir override
 ```
 
-Secrets (SDK token, pairing JSON) live only on the gadget host — never in
-this repo. See [docs/pairing.md](docs/pairing.md) for the security notes.
+Secrets (SDK token, pairing credentials) live only on this machine — never
+in this repo. Security notes: [docs/pairing.md](docs/pairing.md).
 
 ## Development
 
 ```sh
 uv sync
 uv run pytest
-uv run muse-agent --status   # debug outside MCP
+uv run muse-agent --status     # debug outside MCP
+bun bridge/bridge.mjs --help   # the Node bridge underneath
 ```
 
 ## Status
 
-- [x] MCP server + SSH adapter + skill + provisioning scripts (17 unit tests)
-- [x] stdio smoke test: tools respond, unpaired/unreachable return guided errors
-- [ ] Gadget host provisioning (cloud host IPv6 currently unreachable — rerun
-      `scripts/provision.sh` once it is back)
-- [ ] One-time BLE pairing (needs USB BLE adapter; see docs/pairing.md)
+- [x] Dual-backend MCP server (local muse-client / remote musegadget) + skill
+      + provisioning scripts (22 unit tests)
+- [x] stdio smoke test: tools respond; unpaired/unreachable return guided errors
+- [ ] One-time BLE pairing on the Mac (`bun bridge/bridge.mjs pair`)
 - [ ] End-to-end `muse_chat` verification after pairing

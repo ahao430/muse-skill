@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from muse_agent import adapter as adapter_mod
-from muse_agent.adapter import GadgetAdapter, MuseUnavailable, NotPaired, SendResult
+from muse_agent.adapter import MuseUnavailable, NotPaired
+from muse_agent.adapter import GadgetAdapter, SendResult
 
 
 @pytest.fixture
 def fake_adapter(monkeypatch):
     class FakeAdapter(GadgetAdapter):
         def __init__(self):
+            from muse_agent.config import Config
+
+            self.config = Config(backend="ssh")
             self.sent = []
             self.chats = []
             self.fail_with = None
@@ -65,6 +68,16 @@ async def test_status_unreachable_hint(fake_adapter):
     assert "provision.sh" in result["error"]
 
 
+async def test_status_local_backend_hint(fake_adapter):
+    import muse_agent.server as server
+
+    fake_adapter.config.backend = "local"
+    fake_adapter.fail_with = MuseUnavailable("bun not found")
+    result = await server.muse_status()
+    assert result["ready"] is False
+    assert "bun install" in result["error"]
+
+
 async def test_chat_returns_reply(fake_adapter):
     import muse_agent.server as server
 
@@ -92,7 +105,8 @@ async def test_wait_reports_unsupported():
 async def test_sessions_tool_lists(fake_adapter, monkeypatch, tmp_path):
     import muse_agent.server as server
 
-    monkeypatch.setattr(adapter_mod.cfg, "SESSIONS_FILE", tmp_path / "s.json")
+    from muse_agent import config as cfg_mod
+    monkeypatch.setattr(cfg_mod, "SESSIONS_FILE", tmp_path / "s.json")
     result = await server.muse_sessions()
     assert "sessions" in result
     result = await server.muse_sessions(label="review")

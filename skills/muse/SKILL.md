@@ -5,9 +5,9 @@ description: Talk to Muse (Meta's AI device assistant) from coding agents — se
 
 # Muse Skill
 
-Send messages to Muse and receive answers, through a musegadget service
-running on an always-on Linux host (the "gadget host"), driven over SSH by
-the `muse` MCP server.
+Send messages to Muse and receive answers (text and images), through the
+`muse` MCP server. Default backend talks to Muse directly from this Mac
+(muse-client); an optional SSH backend uses a remote musegadget host.
 
 ## Tools
 
@@ -22,8 +22,8 @@ the `muse` MCP server.
 
 ## How to use
 
-1. Call `muse_status` once. If `ready` is false, follow its `error` hint
-   (pairing: `docs/pairing.md`; host setup: `scripts/provision.sh`).
+1. Call `muse_status` once. If `ready` is false, follow its `error`/`hint`
+   fields (pairing: `bun bridge/bridge.mjs pair`, see docs/pairing.md).
 2. Create a side chat for the task: `muse_sessions(label="code-review")`
    → returns `session_id`. Keep using that `session_id` for the whole
    conversation so agent↔Muse talk stays out of the user's main chat.
@@ -42,6 +42,6 @@ the `muse` MCP server.
 
 ## Constraints
 
-- One waiting request per chat at a time (official SDK limit).
-- Messages are plain text; no file transfer in v1.
+- One waiting request per chat at a time (Muse protocol limit).
+- Images ≤ 2 MiB (JPEG/PNG/GIF/WebP); no other file transfer in v1.
 - Everything the user sees should say "Muse", never "Hatch" (official rule).

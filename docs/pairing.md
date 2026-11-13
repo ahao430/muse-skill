@@ -1,92 +1,85 @@
-# Muse Gadget 配对与授权（一次性）
+# Muse 配对与授权（一次性）
 
-本文档独立说明如何完成 Muse 官方 SDK 的 BLE 配对，并把配对产物导入常驻的
-gadget 主机（云主机）。**配对只需做一次**，之后配对机器可以关机丢弃。
+本文档独立说明如何完成 Muse 的 BLE 配对。**配对只需做一次**。
+推荐路径是 **Mac 本机配对**（方式一，无需任何额外硬件）。
 
 ## 0. 前置条件
 
 - Muse 账号 + 手机上装好 Muse app
-- **SDK Token**：到 [gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens)
-  → Account → SDK tokens 生成（`mgst_…`）。阅读 Gadget SDK Terms。
+- **SDK Token**：[gadgets.muse.ai](https://gadgets.muse.ai/settings/sdk-tokens)
+  → Account → SDK tokens 生成（`mgst_…`）。先阅读 Gadget SDK Terms。
   ⚠️ Token 等同凭证：不要提交进 git、不要贴到聊天/issue。
-- 一台**有 BLE 的标准 Linux**（配对机）。云主机没有蓝牙，不能作配对机。
+- **网络**：配对时手机必须能访问 `hatch-api.meta.ai`（Meta 域名，国内
+  网络可能需要手机和电脑都挂代理）。
 
-## 1. 配对机准备（Windows 台式机 + WSL2 路线）
+## 方式一（推荐）：Mac 本机蓝牙配对
 
-需要一个 **USB 蓝牙适配器**（Bluetooth 4.0+，几十元即可）。WSL2 用不了
-Windows 的内置蓝牙，必须 USB 直通。
-
-```powershell
-# Windows 管理员 PowerShell
-winget install usbipd
-usbipd list                       # 找到蓝牙适配器的 BUSID，如 2-3
-usbipd bind --busid <BUSID>
-usbipd attach --wsl --busid <BUSID>
-```
-
-WSL2（建议 Ubuntu 22.04+）内：
+使用社区 [muse-client](https://github.com/wong2/muse-client)（Apache-2.0，
+官方 Gadget SDK 协议的 TypeScript 实现，支持 macOS CoreBluetooth 配对）。
+本仓库已内置其包装脚本。
 
 ```sh
-# 确认适配器已被 WSL 接管
-lsusb | grep -i blue
-sudo apt update && sudo apt install -y bluez python3-dbus python3-gi
+# 1. Xcode Command Line Tools（装过可跳过）
+xcode-select --install
 
-# 安装官方 SDK 并开始配对（打开 BLE 广播 10 分钟）
-curl -fsSL -o install.sh \
-  https://raw.githubusercontent.com/facebookincubator/muse-gadget-sdk/main/linux/install.sh
-less install.sh                   # 先读一遍
-sudo bash install.sh --sdk-token mgst_… --yes --no-pair   # 先装
-sudo musegadget pair              # 再开配对窗口
+# 2. 安装依赖（仓库 bridge/ 目录）
+cd bridge && bun install && cd ..
+
+# 3. 配对（会提示粘贴 SDK Token、请求蓝牙权限）
+export MUSE_SDK_TOKEN=mgst_…        # 或运行时按提示粘贴
+bun bridge/bridge.mjs pair
 ```
 
-### 2. 手机端配对
+手机端：
 
 1. Muse app → Settings → Devices → 打开 **Developer mode**
-2. Add Device（+）→ 选择 `MuseGadgetXXXXXX`（终端打印的名字）
-3. 提示 community device → 继续（是自己的设备）
-4. Wi-Fi 步骤选当前网络即可（WSL 已联网，不需要密码）
-5. 成功后 `musegadget info` 应显示 paired
+2. Add Device（+）→ 选择终端显示的 `MuseGadgetXXXXXX`
+3. 提示 community device → 继续（自己的设备）
+4. Wi-Fi 选 **Use current connection**
 
-> 排错：GATT 133 → 手机开关蓝牙重试；WSL 看不到适配器 → 重新
-> `usbipd detach` / `attach`。
+看到 `Paired successfully` 即完成。凭证保存在
+`~/Library/Application Support/MuseGadgetPair/`，token 之后自动刷新。
+验证：`bun bridge/bridge.mjs status` 应返回 `"paired": true, "ready": true`。
 
-## 3. 导出配对产物
+> 排错：配对卡在 Wi-Fi 之后 → 多半是手机访问 `hatch-api.meta.ai` 不通，
+> 检查手机代理。换 SDK token 后需先 unpair 再重新 pair（见 muse-client CLI）。
 
-配对机上：
+## 方式二（可选后端）：Linux gadget 主机
+
+若需要 24/7 常驻（Mac 关机也能收发），改用云主机跑官方 musegadget：
 
 ```sh
-# WSL 里
-sudo cp /var/lib/musegadget/identity.json /var/lib/musegadget/pairing.json ~/
-sudo chown $USER ~/identity.json ~/pairing.json
-# 拷回 Mac（示例）
+scripts/provision.sh --host USER@HOST --sdk-token mgst_…   # 部署 SDK + 服务
+```
+
+它没有蓝牙，配对仍需在一台有 BLE 的 Linux 完成（WSL2 + usbipd 直通 USB
+蓝牙适配器，或树莓派）：
+
+```sh
+# WSL2 (Ubuntu 22.04+)，Windows 侧先 usbipd attach 蓝牙适配器
+sudo apt install -y bluez python3-dbus python3-gi
+curl -fsSL -o install.sh \
+  https://raw.githubusercontent.com/facebookincubator/muse-gadget-sdk/main/linux/install.sh
+sudo bash install.sh --sdk-token mgst_… --yes
+sudo musegadget pair              # 手机 app 同上配对
+# 导出并导入云主机
+sudo cp /var/lib/musegadget/{identity,pairing}.json ~/
 scp identity.json pairing.json you@mac:~/muse-pairing/
+MUSE_AGENT_HOST=USER@HOST scripts/import_state.sh ~/muse-pairing
 ```
 
-## 4. 导入 gadget 主机（云主机）
+然后在 `~/.config/muse-agent/config.yaml` 里切换后端：
 
-Mac 上：
-
-```sh
-MUSE_AGENT_HOST='root@2607:9d00:2000:143::31b0:2854' \
-  scripts/import_state.sh ~/muse-pairing
-```
-
-脚本会：拷贝两个 JSON 到云主机 `/var/lib/musegadget/`（0600）→ 重启
-musegadget 服务 → 打印 `info`。看到服务 active 且 paired 即成功。
-此后配对机（WSL）不再需要。
-
-## 5. 云主机首次部署（若尚未装 SDK）
-
-```sh
-scripts/provision.sh --host 'root@2607:9d00:2000:143::31b0:2854' --sdk-token mgst_…
-scripts/provision.sh --dry-run   # 先看会执行什么
+```yaml
+backend: ssh        # local（默认，Mac 直连）| ssh（云主机常驻）
+host: USER@HOST     # backend: ssh 时使用
 ```
 
 ## 安全须知
 
-- SDK Token、`identity.json`、`pairing.json` 都是凭证，**永不入库**（.gitignore 已排除）。
-- musegadget 会把 `system.run` / `file.read` / `file.write` 能力交给 Muse，
-  以安装时指定的账号权限运行。云主机上若不需要，可只导入 state 用于
-  收发消息，并自行裁剪命令（`/etc/musegadget/commands.d/`，见官方文档）。
-- 官方已知行为：**断开连接不会取消已开始的命令**，已开始的命令会继续跑完。
+- SDK Token、配对凭证目录 **永不入库**（.gitignore 已排除）。
+- SSH 后端下，musegadget 会把 `system.run` / `file.*` 能力交给 Muse
+  （以安装账号权限运行）；**断开连接不会取消已开始的命令**（官方已知行为）。
+  不需要可自行裁剪命令（`/etc/musegadget/commands.d/`）。
+- local 后端（muse-client）不注册任何本地命令，Muse 只能与你聊天/收发图片。
 - 配对是 community 模式，无厂商验证，请在可信网络完成。

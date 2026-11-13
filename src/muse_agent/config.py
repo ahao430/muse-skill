@@ -17,17 +17,22 @@ from pathlib import Path
 CONFIG_DIR = Path(os.environ.get("MUSE_AGENT_CONFIG_DIR", "~/.config/muse-agent")).expanduser()
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 SESSIONS_FILE = CONFIG_DIR / "sessions.json"
+BRIDGE_DIR = Path(__file__).resolve().parent.parent.parent / "bridge"
 
 DEFAULT_HOST = "root@2607:9d00:2000:143::31b0:2854"  # ssh syntax: bare IPv6, no brackets
-DEFAULT_TIMEOUT = 120  # seconds; musegadget --wait caps at 600
+DEFAULT_TIMEOUT = 120  # seconds; muse chat caps at 600
 
 
 @dataclass
 class Config:
+    backend: str = "local"  # "local" (muse-client on this Mac) | "ssh" (remote musegadget)
     host: str = DEFAULT_HOST
     timeout: int = DEFAULT_TIMEOUT
     connect_timeout: int = 10
     default_session: str | None = None  # None = main chat
+    bridge_command: str = "bun"  # runner for bridge/bridge.mjs (local backend)
+    bridge_dir: str = str(BRIDGE_DIR)
+    credentials_dir: str | None = None  # muse-client credentials dir override
     sessions: dict[str, dict] = field(default_factory=dict)  # side chat bookkeeping
 
 
@@ -47,8 +52,16 @@ def _parse_flat_yaml(path: Path) -> dict[str, str]:
 def load_config() -> Config:
     cfg = Config()
     file_values = _parse_flat_yaml(CONFIG_FILE)
+    if "backend" in file_values:
+        cfg.backend = file_values["backend"]
     if "host" in file_values:
         cfg.host = file_values["host"]
+    if "bridge_command" in file_values:
+        cfg.bridge_command = file_values["bridge_command"]
+    if "bridge_dir" in file_values:
+        cfg.bridge_dir = file_values["bridge_dir"]
+    if "credentials_dir" in file_values and file_values["credentials_dir"]:
+        cfg.credentials_dir = file_values["credentials_dir"]
     if "timeout" in file_values:
         try:
             cfg.timeout = int(file_values["timeout"])
@@ -62,6 +75,7 @@ def load_config() -> Config:
     if "default_session" in file_values and file_values["default_session"] not in ("", "main"):
         cfg.default_session = file_values["default_session"]
     cfg.host = os.environ.get("MUSE_AGENT_HOST", cfg.host)
+    cfg.backend = os.environ.get("MUSE_AGENT_BACKEND", cfg.backend)
     if "MUSE_AGENT_TIMEOUT" in os.environ:
         try:
             cfg.timeout = int(os.environ["MUSE_AGENT_TIMEOUT"])

@@ -1,0 +1,17 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "muse-bridge",
+      "dependencies": {
+        "muse-client": "0.4.0",
+      },
+    },
+  },
+  "packages": {
+    "muse-client": ["muse-client@0.4.0", "https://registry.npmmirror.com/muse-client/-/muse-client-0.4.0.tgz", { "dependencies": { "ws": "^8.22.0" } }, "sha512-FZyZuX/B8+u0LEr8N2BsOkBrET9+FhVpb4nIesG/vQcfJ1+ZVor3/rFiX8WCh5ZwjSg8DEJNX2vwFBOlLk0wSA=="],
+
+    "ws": ["ws@8.23.0", "https://registry.npmmirror.com/ws/-/ws-8.23.0.tgz", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ=="],
+  }
+}
