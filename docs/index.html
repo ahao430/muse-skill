@@ -48,27 +48,71 @@
   .arch { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 22px; font-family: ui-monospace, monospace; font-size: .82rem; color: var(--muted); white-space: pre; overflow-x: auto; }
   .arch b { color: var(--accent); }
   ol.steps { padding-left: 22px; } ol.steps li { margin: 10px 0; }
+  .gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 18px; }
+  @media (max-width: 720px) { .gallery { grid-template-columns: 1fr; } }
+  .gallery figure { background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+                    padding: 14px; margin: 0; transition: transform .18s ease, border-color .18s ease; }
+  .gallery figure:hover { transform: translateY(-4px); border-color: var(--accent); }
+  .gallery img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 10px; display: block; }
+  .gallery figcaption { text-align: center; color: var(--muted); font-size: .88rem; padding-top: 12px; line-height: 1.5; }
+  .gallery figcaption small { opacity: .65; }
   footer { padding: 32px 0 48px; text-align: center; color: var(--muted); font-size: .85rem; border-top: 1px solid var(--border); }
 </style>
 </head>
 <body>
 
 <header class="wrap">
-  <h1><span class="muse">Muse</span> Agent Skill</h1>
-  <p class="tagline">把 Meta 的 Muse 接入 Claude Code / Zcode 等编程 Agent<br>发消息 · 收回答 · 发图片 · 跨 Agent 协作 —— 全链路本地，无公网服务器</p>
-  <div class="badges">
-    <span class="badge"><b>✓ 端到端验证</b> 文字 / 新会话 / 图片</span>
-    <span class="badge">MCP + Agent Skills</span>
-    <span class="badge">双后端 local / ssh</span>
-    <span class="badge">一次配对 · 手机即退役</span>
-    <span class="badge">Mac / Linux / Windows</span>
-  </div>
-  <div class="cta">
-    <a class="btn primary" href="https://github.com/ahao430/muse-skill#readme">GitHub 仓库</a>
-    <a class="btn" href="https://github.com/ahao430/muse-skill/blob/main/docs/pairing.md">配对指南</a>
-    <a class="btn" href="https://github.com/ahao430/muse-skill/blob/main/skills/muse/SKILL.md">SKILL.md</a>
+  <div class="hero">
+    <div class="hero-text">
+      <h1><span class="muse">Muse</span> Agent Skill</h1>
+      <p class="tagline">把 Meta 的 Muse 接入 Claude Code / Zcode 等编程 Agent<br>发消息 · 收回答 · 发图片 · 跨 Agent 协作 —— 全链路本地，无公网服务器</p>
+      <div class="badges">
+        <span class="badge"><b>✓ 端到端验证</b> 文字 / 新会话 / 图片</span>
+        <span class="badge">MCP + Agent Skills</span>
+        <span class="badge">双后端 local / ssh</span>
+        <span class="badge">一次配对 · 手机即退役</span>
+        <span class="badge">Mac / Linux / Windows</span>
+      </div>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/ahao430/muse-skill#readme">GitHub 仓库</a>
+        <a class="btn" href="https://github.com/ahao430/muse-skill/blob/main/docs/pairing.md">配对指南</a>
+        <a class="btn" href="https://github.com/ahao430/muse-skill/blob/main/skills/muse/SKILL.md">SKILL.md</a>
+      </div>
+    </div>
+    <div class="hero-art">
+      <img src="assets/mascot-1.webp" alt="Muse 吉祥物（Muse AI 生成）" loading="lazy"
+           onerror="this.closest('.hero-art').style.display='none'">
+      <span class="art-credit">吉祥物由 Muse 生成 🎨</span>
+    </div>
   </div>
 </header>
+<style>
+  .hero { display: grid; grid-template-columns: 1fr 320px; gap: 36px; align-items: center; text-align: left; }
+  .hero-text { text-align: center; }
+  @media (max-width: 860px) { .hero { grid-template-columns: 1fr; } .hero-art { display: none !important; } }
+  .hero-art { position: relative; }
+  .hero-art img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 20px;
+                  border: 1px solid var(--border); box-shadow: 0 24px 60px rgba(0,0,0,.5), 0 0 0 6px rgba(126,231,135,.05); }
+  .art-credit { position: absolute; bottom: 10px; left: 12px; font-size: .72rem; color: var(--muted);
+                background: rgba(13,17,23,.75); backdrop-filter: blur(6px); border-radius: 6px; padding: 3px 8px; }
+</style>
+
+<section class="wrap">
+  <h2>吉祥物 · 由 Muse 亲手绘制</h2>
+  <p class="lead">下面两张图不是人画的——是通过本项目的 <code>muse_chat</code> 让
+  Muse 调用它的 <code>generate_image</code> 生成、再经 raw 事件捕获下载的。
+  这本身就是这个 skill 的能力演示。</p>
+  <div class="gallery">
+    <figure>
+      <img src="assets/mascot-1.webp" alt="Muse 吉祥物 1：毛绒宇航员抱光球" loading="lazy">
+      <figcaption>① 毛绒宇航员 · 手握全息光球<br><small>1600×1600 · image/webp · 408 KB</small></figcaption>
+    </figure>
+    <figure>
+      <img src="assets/mascot-2.webp" alt="Muse 吉祥物 2：蓝紫小机器人" loading="lazy">
+      <figcaption>② 蓝紫小机器人 · 张开双臂<br><small>1600×1600 · image/webp · 217 KB</small></figcaption>
+    </figure>
+  </div>
+</section>
 
 <section class="wrap">
   <h2>架构</h2>
