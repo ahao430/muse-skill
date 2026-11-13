@@ -136,9 +136,37 @@ mkdir -p ~/.config/muse-agent
 echo 'mgst_你的token' > ~/.config/muse-agent/sdk_token && chmod 600 ~/.config/muse-agent/sdk_token
 ```
 
-网络要求：配对时**手机**和**配对机**都要能访问 `hatch-api.meta.ai` /
-`api.muse.ai`（国内网络可能需代理）。日常使用只需运行机（Mac/Windows）
-能通，手机不再参与。
+### 国内网络与代理（要不要开 TUN？）
+
+**TUN 不是必须的。** 需要代理的只有两段，各有最省事的走法（海外网络
+直连即可，跳过本节）：
+
+| 阶段 | 谁要能访问 Meta 域名 | 最省事的走法 |
+|---|---|---|
+| 配对（一次性 2 分钟） | **手机 + 电脑**都要能访问 `hatch-api.meta.ai` | 怎么方便怎么来：手机开自己的代理；电脑开代理客户端的系统代理或 TUN 均可，配完就不用了 |
+| 日常聊天/画图 | 只有**运行机**要通 `hatch.metaaivm.com`（手机不再参与） | **免 TUN、免系统代理**：`bridge_proxy` 一行 + proxychains4 按进程接管 |
+
+日常这段的三个前提：
+
+1. 代理客户端开着（Clash Verge / Surge / sing-box 均可），确认它的
+   **SOCKS 端口**——Clash Verge 混合端口默认 `7897`，老版 Clash `7890`
+2. `brew install proxychains-ng`（未装时自动回落 node 方案，但实测偶有
+   空事件流，proxychains 优先）
+3. 写一行配置（文件已有内容时确认末尾有换行、别粘连，同
+   [docs/cos.md](docs/cos.md) 的翻车点说明）：
+
+   ```sh
+   mkdir -p ~/.config/muse-agent
+   echo 'bridge_proxy: http://127.0.0.1:7897' >> ~/.config/muse-agent/config.yaml
+   ```
+
+原理一句话：MCP server 调 bridge 时自动生成 proxychains 配置，把 bun 的
+全部连接（含 WSS）从 SOCKS5 出去——按进程接管，不碰系统网络；TUN 或
+系统代理开着不冲突，不开也行。配对时段例外：`pair` 是手动命令，不走
+这层包装，所以那 2 分钟用系统代理/TUN 最省事。
+
+验证：`uv run muse-agent --status` 出 `ready: true` 即通；不通看下方
+「五、排错」第一行。
 
 ---
 
@@ -149,6 +177,9 @@ echo 'mgst_你的token' > ~/.config/muse-agent/sdk_token && chmod 600 ~/.config/
 > 删除这台设备）。
 
 **A1. 配对（一次性）**
+
+> 这 2 分钟手机和电脑都要能访问 Meta 域名（见上方「国内网络与代理」），
+> 配完手机就退役了。
 
 ```sh
 export MUSE_SDK_TOKEN=$(cat ~/.config/muse-agent/sdk_token)

@@ -148,30 +148,47 @@ muse-agent 开头的侧聊会话里。</code></pre>
 </section>
 
 <section class="wrap">
-  <h2>快速开始</h2>
-  <p class="lead">配好 SDK token、连上代理后 5 分钟内可达「画图零审批」。</p>
+  <h2>快速开始 · 零基础跟跑</h2>
+  <p class="lead">从装工具到画出第一张图，照着面板从上往下执行即可，每步带注释。
+  需要准备：一台 Mac + Muse 账号（手机装好 app）+ 国内网络备一个代理客户端。
+  深入手册：<a href="https://github.com/ahao430/muse-skill/blob/main/docs/pairing.md">配对</a> ·
+  <a href="https://github.com/ahao430/muse-skill/blob/main/docs/cos.md">COS 配置</a> ·
+  <a href="https://github.com/ahao430/muse-skill/blob/main/README.md">README</a></p>
   <div class="tabs">
     <button class="tab active" data-tab="a">🅰 手机配对直连 <small>推荐</small></button>
     <button class="tab" data-tab="b">🅱 Linux SDK 常驻 <small>24/7</small></button>
   </div>
 
   <div class="tabpane" id="tab-a">
-    <pre><code>git clone https://github.com/ahao430/muse-skill &amp;&amp; cd muse-skill
-uv sync &amp;&amp; uv run pytest &amp;&amp; (cd bridge &amp;&amp; bun install)
-# SDK token: https://gadgets.muse.ai/settings/sdk-tokens
-echo 'mgst_…' &gt; ~/.config/muse-agent/sdk_token
+    <pre><code># 0. 前置工具（各装一次；海外网络可跳过 proxychains-ng）
+xcode-select --install                                 # Mac 命令行工具（蓝牙权限要用）
+curl -LsSf https://astral.sh/uv/install.sh | sh        # uv：跑 MCP server
+curl -fsSL https://bun.sh/install | bash               # bun：跑 bridge
+brew install proxychains-ng                            # 国内网络免 TUN 代理用
 
-# 配对（手机 app: Developer mode → Add Device → 选 MuseGadgetXXXXXX）
+# 1. 克隆仓库 + 装依赖
+git clone https://github.com/ahao430/muse-skill &amp;&amp; cd muse-skill
+uv sync &amp;&amp; (cd bridge &amp;&amp; bun install)
+
+# 2. SDK token（等同凭证，勿外传）：https://gadgets.muse.ai/settings/sdk-tokens → 新建
+mkdir -p ~/.config/muse-agent
+echo 'mgst_你的token' &gt; ~/.config/muse-agent/sdk_token
+
+# 3. 国内网络配代理 —— TUN 非必须，日常按进程走 SOCKS
+#    （端口换成你代理客户端的 SOCKS 端口，Clash Verge 默认 7897）
+echo 'bridge_proxy: http://127.0.0.1:7897' &gt;&gt; ~/.config/muse-agent/config.yaml
+
+# 4. 蓝牙配对（一次性 2 分钟，手机 app: Settings → Devices →
+#    Developer mode → Add Device → 选 MuseGadgetXXXXXX）
+#    ⚠ 这 2 分钟手机+电脑都要能访问 Meta 域名：手机开自己的代理，
+#      电脑开系统代理或 TUN 都行——配完就都不用了
 bun bridge/bridge.mjs pair
-bun bridge/bridge.mjs status            # ready: true
+bun bridge/bridge.mjs status                           # "ready": true 即配对成功
 
-# 国内网络：config.yaml 加一行，免 TUN 走代理
-echo 'bridge_proxy: http://127.0.0.1:7897' >> ~/.config/muse-agent/config.yaml
-
-# （推荐）COS 图片中转：三行配置，首次批一次后画图零弹窗（README 路线 A3）
-
-# Muse 侧装桥（一次）：把 muse-side/zcode-bridge.zip 发进 Muse 聊天
-# + 安装提示词（见上方「前提」），否则 Muse 无视预签名地址、回退逐文件审批</code></pre>
+# 5.（推荐）COS 中转 → 画图零弹窗：按 docs/cos.md 手册加三行配置 + selftest
+# 6. Muse 侧装桥（一次）：把 muse-side/zcode-bridge.zip 发进 Muse 聊天
+#    + 安装提示词（见上方「前提」），不装则回退官方逐文件审批
+# 7. 注册 MCP + 安装 agent 技能 ↓ 见下方</code></pre>
   </div>
 
   <div class="tabpane" id="tab-b" hidden>
@@ -185,7 +202,8 @@ scripts/import_state.sh ~/muse-pairing --host USER@HOST
 
 # 每台设备 config.yaml:
 # backend: ssh
-# host: USER@HOST</code></pre>
+# host: USER@HOST
+# 国内网络：给常驻主机的 musegadget 服务配 https_proxy（或主机侧透明代理）</code></pre>
   </div>
 
   <pre><code># 注册 MCP（Claude Code）：
@@ -202,7 +220,7 @@ python3 ~/.agents/skills/cos/cos.py upload 文件.png --md   # → ![名字](永
   <div class="cols">
     <div class="card"><h3>诚实的异步</h3><p>画图拆成 start/result 两步：超时是状态不是错误，任务持久化、重查不重画；审批等待独立成 <code>approval_required</code> 并附指引。</p></div>
     <div class="card"><h3>零凭证中转</h3><p>COS 密钥只在 Mac；Muse 只收到 1 小时一次性预签名 PUT。签名算法纯 Python 自实现，配对/自测命令权威验收。</p></div>
-    <div class="card"><h3>国内网络现实</h3><p>代理节点劣化、bun 代理 WS 缺陷、TLS 重置——proxychains4 免 TUN 方案固化，网络类失败可重试不判死。</p></div>
+    <div class="card"><h3>国内网络现实</h3><p><b>TUN 非必须</b>：日常连接由 proxychains4 按进程接管 WSS（系统网络零改动）；代理节点劣化、TLS 重置等网络类失败可重试不判死。</p></div>
     <div class="card"><h3>39 项单测 + CI</h3><p>状态机/去重/超尺寸/不内联/预签名接线全 mock 化；GitHub Actions 跑 pytest 与脚本检查。</p></div>
   </div>
 </section>
