@@ -16,10 +16,18 @@ Claude Code / Zcode ──MCP stdio──> muse-agent (this repo, Mac)
 
 ## Quick start
 
+0. **Sanity check** (any time, no Muse needed):
+
+   ```sh
+   uv sync
+   uv run pytest          # unit tests, no network
+   uv run muse-agent --status   # gadget host reachability + pairing state
+   ```
+
 1. **Provision the gadget host** (once):
 
    ```sh
-   scripts/provision.sh --host USER@HOST --sdk-token mgst_…
+   scripts/provision.sh --host USER@HOST --sdk-token mgst_…   # --dry-run to preview
    ```
 
 2. **Pair once over BLE** — needs any BLE-capable Linux + the Muse phone app.
@@ -28,6 +36,10 @@ Claude Code / Zcode ──MCP stdio──> muse-agent (this repo, Mac)
    ```sh
    scripts/import_state.sh ~/muse-pairing --host USER@HOST
    ```
+
+   If Muse does not answer within the timeout, the message was still
+   delivered — retry `muse_chat` with a longer timeout rather than assuming
+   failure (see SKILL.md).
 
 3. **Register the MCP server** in your agent client:
    [Claude Code](docs/claude-code.md) · [Zcode](docs/zcode.md)
@@ -68,6 +80,9 @@ uv run muse-agent --status   # debug outside MCP
 
 ## Status
 
-- [x] MCP server + SSH adapter + skill + provisioning scripts
+- [x] MCP server + SSH adapter + skill + provisioning scripts (17 unit tests)
+- [x] stdio smoke test: tools respond, unpaired/unreachable return guided errors
+- [ ] Gadget host provisioning (cloud host IPv6 currently unreachable — rerun
+      `scripts/provision.sh` once it is back)
 - [ ] One-time BLE pairing (needs USB BLE adapter; see docs/pairing.md)
 - [ ] End-to-end `muse_chat` verification after pairing
